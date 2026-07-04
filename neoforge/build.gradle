@@ -1,0 +1,118 @@
+plugins {
+    id "com.github.johnrengelman.shadow" version "8.1.1"
+}
+
+architectury {
+    platformSetupLoomIde()
+    neoForge()
+}
+
+loom {
+    accessWidenerPath = project(":common").loom.accessWidenerPath
+
+    neoForge {
+        // NeoForge handles mixins via mods.toml
+    }
+}
+
+configurations {
+    common
+    shadowCommon
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentNeoForge.extendsFrom common
+}
+
+dependencies {
+    // 排除 common 传递来的 Fabric 依赖
+    implementation(project(":common")) {
+        exclude group: 'net.fabricmc'
+    }
+
+//    shadowCommon(project(path: ":common", configuration: "transformProductionNeoForge")) {
+//        exclude group: 'net.fabricmc'
+//        transitive = false
+//    }
+
+    neoForge "net.neoforged:neoforge:${rootProject.neoforge_version}"
+    modApi "dev.architectury:architectury-neoforge:${rootProject.architectury_version}"
+
+    // KubeJS (如果需要)
+    // modImplementation ("dev.latvian.mods:kubejs-neoforge:$kubejs_version")
+
+
+    // MixinExtras - 使用 include 嵌入
+    implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:0.4.1"))
+    implementation(include("io.github.llamalad7:mixinextras-neoforge:0.4.1"))
+
+    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false }
+    implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+//    compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
+    implementation("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
+    implementation("com.tterrag.registrate:Registrate:${registrate_version}")
+    implementation("curse.maven:power-grid-1321420:7999916")
+    // 第三方库：需要随模组一起分发，使用 implementation + include
+    implementation(include('org.apache.commons:commons-math3:3.6.1'))
+    implementation(include('com.github.FiguraMC.luaj:luaj-jse:3.0.8-figura'))
+    implementation(include('com.github.FiguraMC.luaj:luaj-core:3.0.8-figura'))
+    implementation "curse.maven:create-328085:7963363"
+
+    implementation 'com.google.code.gson:gson:2.11.0'
+
+    // SQLite - 通过 shadowCommon 处理（与原有逻辑一致）
+    shadowCommon "org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"
+    // 同时让 NeoForge 运行时也能看到（但 shadowJar 会打包）
+    implementation "org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"
+
+    // 重新声明 shadowCommon 并排除 Fabric (确保传递依赖中无 fabric-loader)
+    shadowCommon(project(path: ":common", configuration: "transformProductionNeoForge")) {
+        exclude group: 'net.fabricmc'
+        transitive = false
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand "version": project.version
+    }
+}
+
+shadowJar {
+    exclude "fabric.mod.json"
+    exclude "architectury.common.json"
+
+    configurations = [project.configurations.shadowCommon]
+    archiveClassifier = "dev-shadow"
+}
+
+remapJar {
+    inputFile.set(shadowJar.archiveFile)
+    dependsOn shadowJar
+}
+
+sourcesJar {
+    def commonSources = project(":common").sourcesJar
+    dependsOn commonSources
+    from commonSources.archiveFile.map { zipTree(it) }
+}
+
+components.java {
+    withVariantsFromConfiguration(project.configurations.shadowRuntimeElements) {
+        skip()
+    }
+}
+
+publishing {
+    publications {
+        mavenNeoForge(MavenPublication) {
+            artifactId = rootProject.archives_base_name + "-" + project.name
+            from components.java
+        }
+    }
+
+    repositories {
+        // Add repositories to publish to here.
+    }
+}

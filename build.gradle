@@ -1,0 +1,97 @@
+plugins {
+    id "architectury-plugin" version "3.5.166"
+    id "dev.architectury.loom" version "1.13.469" apply false
+}
+
+architectury {
+    minecraft = rootProject.minecraft_version
+}
+
+subprojects {
+    apply plugin: "dev.architectury.loom"
+
+    loom {
+        silentMojangMappingsLicense()
+    }
+
+    repositories {
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = "Modrinth"
+                    url = "https://api.modrinth.com/maven"
+                }
+            }
+            filter {
+                includeGroup "maven.modrinth"
+            }
+
+            forRepository {
+                maven {
+                    url "https://cursemaven.com"
+                }
+            }
+            filter {
+                includeGroup "curse.maven"
+            }
+        }
+
+        maven { url = "https://modmaven.dev" }
+        maven { url = "https://maven.squiddev.cc" } // CC: Tweaked
+        maven { url = "https://mvn.devos.one/snapshots" } // Registrate
+        maven { url = "https://raw.githubusercontent.com/Fuzss/modresources/main/maven" } // NeoForge config api port, needed by ponder
+        maven { url = "https://maven.createmod.net" } // Ponder, Flywheel
+        maven { url = "https://maven.ryanhcode.dev/releases" } // Sable, Offroad, Simulated, Aeronautics
+        maven {
+            name = 'ParchmentMC'
+            url = 'https://maven.parchmentmc.org'
+        }
+        maven {
+            name = "Curse Maven"
+            url = "https://www.cursemaven.com"
+            content {
+                includeGroup "curse.maven"
+            }
+        }
+        maven { // NeoForge
+            url "https://maven.neoforged.net/releases/"
+        }
+        maven {
+            name = "Fabric"
+            url = "https://maven.fabricmc.net/"
+        }
+        maven { url "https://maven.architectury.dev/" }
+        maven { url = "https://maven.blamejared.com/" } // JEI
+        maven { url = "https://maven.latvian.dev/releases" }
+        maven { url 'https://jitpack.io' }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+
+    dependencies {
+        minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+        mappings loom.officialMojangMappings()
+    }
+}
+
+allprojects {
+    apply plugin: "java"
+    apply plugin: "architectury-plugin"
+    apply plugin: "maven-publish"
+
+    base {
+        archivesName = rootProject.archives_base_name
+    }
+
+    version = rootProject.mod_version
+    group = rootProject.maven_group
+
+    tasks.withType(JavaCompile) {
+        options.encoding = "UTF-8"
+        options.release = 21
+    }
+
+    java {
+        withSourcesJar()
+    }
+}

@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+  ],
+  "mixins": [
+    "create.KineticBlockEntityMixin",
+    "create.KineticBlockEntityAccessorMixin",
+    "create.CommonEventsMixin",
+    "create.TorquePropagatorAccessor",
+    "powergrid.WorldNetworksMixin",
+    "powergrid.NativeMNAMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

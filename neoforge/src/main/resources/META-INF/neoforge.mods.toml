@@ -1,0 +1,50 @@
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "All Rights Reserved"
+
+[[mixins]]
+config = "cryptand.mixins.json"
+
+[[mods]]
+modId = "cryptand"
+version = "${version}"
+displayName = "Cryptand Mod"
+authors = "HalfDragonFox"
+description = '''
+Cryptand Mod - Multi-threading optimization for Create: Power Grid
+'''
+
+[[dependencies.cryptand]]
+modId = "neoforge"
+mandatory = true
+versionRange = "[21,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.cryptand]]
+modId = "minecraft"
+mandatory = true
+versionRange = "[1.21.1,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.cryptand]]
+modId = "architectury"
+mandatory = true
+versionRange = "[13,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.cryptand]]
+modId = "create"
+mandatory = true
+versionRange = "[6.0,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.cryptand]]
+modId = "powergrid"
+mandatory = true
+versionRange = "[0.5.5.1,)"
+ordering = "AFTER"
+side = "BOTH"

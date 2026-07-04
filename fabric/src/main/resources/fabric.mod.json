@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "cryptand",
+  "version": "${version}",
+  "name": "Cryptand Mod",
+  "description": "Cryptand Mod",
+  "authors": [
+    "HalfDragonFox"
+  ],
+  "license": "All Rights Reserved",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.hdf.cryptand.fabric.CryptandFabric"
+    ]
+  },
+  "mixins": [
+    "examplemod.mixins.json"
+  ],
+  "depends": {
+    "fabric": "*",
+    "minecraft": ">=1.21.1",
+    "architectury": ">=13"
+  }
+}
