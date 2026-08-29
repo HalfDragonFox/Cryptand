@@ -2,16 +2,59 @@ plugins {
     id "com.github.johnrengelman.shadow" version "8.1.1"
 }
 
+repositories {
+    // LDLib2 官方发布仓库（snapshots 持续构建）
+    maven { url = "https://maven.firstdark.dev/snapshots" }
+    // CEE（Create-Electro-Energetics，2026-08-22 测试运行/对接用）
+    maven { url = "https://api.modrinth.com/maven" }
+    maven { url = "https://cursemaven.com" }
+    // CEE 运行时库（sable / offroad）
+    maven { url = "https://maven.ryanhcode.dev/releases" }
+    // JEI（LDlib 集成需要，2026-08-22 版本不足报错修复）
+    maven { url = "https://maven.blamejared.com/" }
+}
+
 architectury {
     platformSetupLoomIde()
     neoForge()
 }
 
-loom {
-    accessWidenerPath = project(":common").loom.accessWidenerPath
-
-    neoForge {
-        // NeoForge handles mixins via mods.toml
+// 把 common 的 engine + storage + circuit 源码复制到 neoforge 的 build 目录并
+// 作为 main 源码编译，使 cryptand mod 自身包含这些类。这样 dev 运行无需改
+// loom.mods / MOD_CLASSES（改 MOD_CLASSES 会触发 create Registrate "unused
+// register callbacks" 导致启动崩溃）。
+// ⚠ storage 必须一并复制（2026-08-14）：SQLite 的 SqliteStore/AsyncOp 等类在
+// Loom dev 运行时不在 classpath（implementation project(:common) 只编译可见），
+// 运行时 NoClassDefFoundError → SQLite 从未打开 → 导线无法存档/恢复。
+// ⚠ circuit 必须一并复制（2026-08-15）：网表数据库 NetlistDatabase/SimulationIdGen
+// 等类同样在 Loom dev 运行时不在 classpath，不复制 → NoClassDefFoundError。
+// （2026-08-17：EDA 电路查看器 com.hdf.cryptand.neoforge.eda 已整体迁到 neoforge 源集，
+//  不再从 common 复制。）
+// ⚠ integratednetwork 必须一并复制（2026-08-26）：集成网络核心
+//  com.hdf.cryptand.integratednetwork（common 纯 Java 独立核心，与电路仿真平级），
+//  neoforge 平台层引用其类 → 运行时必须存在。
+def engineSourceCopy = tasks.register('copyEngineSource') {
+    def srcDirs = [
+            project(':common').file('src/main/java/com/hdf/cryptand/circuitsimulation'),
+            project(':common').file('src/main/java/com/hdf/cryptand/core/storage'),
+            project(':common').file('src/main/java/com/hdf/cryptand/integratednetwork')
+    ]
+    // 关键：用 inputs.dir（递归快照目录内容）而非 inputs.files(目录)。
+    // inputs.files(目录) 的 up-to-date 检查只跟踪目录本身、不递归内容 →
+    // 改 common 源码后 copyEngineSource 误判 UP-TO-DATE → engineSrc 一直旧代码
+    // （2026-08-14 服务器实证：SqliteStore 修复未生效的元凶）。
+    srcDirs.each { inputs.dir(it) }
+    def target = layout.buildDirectory.dir('engineSrc')
+    outputs.dir(target)
+    doLast {
+        def dest = target.get().asFile
+        delete dest
+        for (src in srcDirs) {
+            copy {
+                from src
+                into dest
+            }
+        }
     }
 }
 
@@ -21,7 +64,93 @@ configurations {
     compileClasspath.extendsFrom common
     runtimeClasspath.extendsFrom common
     developmentNeoForge.extendsFrom common
+    // LDLib2 官方 jar 专用配置：编译期 + 构建期 patch 用（运行时用 patched 版）
+    ldlib2Official
 }
+
+sourceSets {
+    main {
+        java {
+            srcDir(engineSourceCopy)
+        }
+        // 编译期使用官方 LDLib2 jar（运行时用 patched 版）
+        compileClasspath += configurations.ldlib2Official
+    }
+}
+
+tasks.named('compileJava') {
+    dependsOn engineSourceCopy
+}
+
+loom {
+    accessWidenerPath = project(":common").loom.accessWidenerPath
+
+    neoForge {
+        // NeoForge handles mixins via mods.toml
+    }
+
+    runs {
+        client {
+        }
+        server {
+        }
+    }
+}
+
+// ===== LDLib2 官方 jar 自动 patch =====
+// 官方 2.2.35 的以下 mixin 引用了 NeoForge 21.1.231（Mojang 重构）中已不存在的 lambda，
+// required=true 注入失败后 MixinExtras 已生成损坏的 bridge 字节码 → VerifyError/崩溃：
+//   - BlockStateModelLoaderMixin : lambda$loadBlockStateDefinitions$10（客户端模型加载）
+//   - WorldLoaderMixin          : lambda$load$0（进入世界时 WorldLoader 加载）
+// 均已用 javap 验证在 21.1.231 中不存在。其余 lambda mixin（如 ServerPlayerMixin
+// lambda$openMenu$15）经验证存在，正常保留。
+// （-Dmixin.env.ignoreRequired 无效：bridge 已生成）。
+// 本任务从官方 jar 复制并仅移除这些 mixin（其余内容/元数据原样保留），
+// 运行时使用 patched 版，依赖声明仍用官方坐标、版本可升级。
+def patchLdlib2Task = tasks.register('patchLdlib2Jar') {
+    def inJar = project.provider { configurations.ldlib2Official.singleFile }
+    def outJar = layout.buildDirectory.file("ldlib2-patched/ldlib2-${rootProject.ldlib2_version}-patched.jar")
+    inputs.file(inJar)
+    outputs.file(outJar)
+    doLast {
+        def src = inJar.get()
+        def dst = outJar.get().asFile
+        dst.parentFile.mkdirs()
+        def zis = new java.util.zip.ZipInputStream(new java.io.FileInputStream(src))
+        def zos = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(dst))
+        zis.withCloseable {
+            zos.withCloseable {
+                java.util.zip.ZipEntry entry
+                while ((entry = zis.nextEntry) != null) {
+                    def ne = new java.util.zip.ZipEntry(entry)
+                    zos.putNextEntry(ne)
+                    if (entry.name == 'ldlib2.mixins.json') {
+                        def content = new String(zis.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                        def newContent = content
+                                .replace('    "BlockStateModelLoaderMixin",\n', '')
+                                .replace('    "WorldLoaderMixin",\n', '')
+                        zos.write(newContent.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                    } else {
+                        def buf = new byte[8192]
+                        int n
+                        while ((n = zis.read(buf)) > 0) { zos.write(buf, 0, n) }
+                    }
+                    zos.closeEntry()
+                }
+            }
+        }
+        if (!dst.exists()) {
+            throw new GradleException("patchLdlib2Jar 失败: 未生成 " + dst)
+        }
+        logger.lifecycle("LDLib2 patched jar: {}", dst)
+    }
+}
+
+
+
+
+
+
 
 dependencies {
     // 排除 common 传递来的 Fabric 依赖
@@ -37,32 +166,71 @@ dependencies {
     neoForge "net.neoforged:neoforge:${rootProject.neoforge_version}"
     modApi "dev.architectury:architectury-neoforge:${rootProject.architectury_version}"
 
-    // KubeJS (如果需要)
-    // modImplementation ("dev.latvian.mods:kubejs-neoforge:$kubejs_version")
-
-
     // MixinExtras - 使用 include 嵌入
     implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:0.4.1"))
     implementation(include("io.github.llamalad7:mixinextras-neoforge:0.4.1"))
 
     implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false }
     implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
+    // Create: Aeronautics（可选联动：compileOnly 编译期 API，不强制玩家安装；
+    // 运行时由 AeronauticsCompat 检测 mod 存在，未装不注入 mixin / 不启用功能）
+    compileOnly("maven.modrinth:create-aeronautics:${rootProject.aeronautics_version}") {
+        transitive = false
+    }
+    // CEE（Create-Electro-Energetics，2026-08-22 测试运行 / 端子互通对接）。
+    // compileOnly = 编译期可见（未来精确 API）；runtimeOnly = dev 运行加载 CEE。
+    compileOnly("maven.modrinth:create-electro-energetics:1.21.1-1.1.1") { transitive = false }
+    runtimeOnly("maven.modrinth:create-electro-energetics:1.21.1-1.1.1") { transitive = false }
+    // ⚠ 2026-08-22 启动崩溃修复（v2 实证）：依赖树确认【offroad 直接依赖
+    //   cc.tweaked:cc-tweaked-1.21.1-forge:1.115.1】（sable 不带）。CC 1.115.1 的
+    //   mixin 与 MC 1.21.1 不兼容（V3818_3Mixin/DataFixersMixin → Pre-bootstrap 崩）。
+    //   CC 的 maven group 是【cc.tweaked】（旧版才是 org.squiddev）→ 之前
+    //   exclude org.squiddev 无效。改为排除 cc.tweaked（sable/offroad 都排，
+    //   防未来版本变动）；sable/offroad 的 computercraft 兼容 mixin 无 target 仅
+    //   警告不崩。
+    runtimeOnly("dev.ryanhcode.sable:sable-neoforge-1.21.1:2.0.3") { exclude group: "cc.tweaked" }
+    runtimeOnly("dev.ryanhcode.offroad:offroad-neoforge-1.21.1:1.3.0") { exclude group: "cc.tweaked" }
+    runtimeOnly("maven.modrinth:create-aeronautics:${rootProject.aeronautics_version}") { transitive = false }
+    // ⚠ CEE 还依赖 simulated（dev.simulated_team.simulated）；若 dev 跑 CEE 报缺
+    // simulated，把 CEE 及其依赖（simulated/offroad/sable/aeronautics）放到
+    // neoforge/run/mods 由 NeoForge 加载即可（仓库坐标随发布源调整）。
+    // JEI（LDlib 集成依赖，2026-08-22 版本不足报错修复：19.21.0.247 → 19.21.2.313）
+    compileOnly("mezz.jei:jei-${minecraft_version}-neoforge-api:${rootProject.jei_version}")
+    runtimeOnly("mezz.jei:jei-${minecraft_version}-neoforge:${rootProject.jei_version}")
+    // LDLib2 - UI 框架（2026-08-13 用户要求：UI 全部使用 ldlib，现代化）
+    // 官方 firstdark 仓库版本（:all classifier 自带依赖分发，jarJar 内嵌 kotlin/yoga/taffy）
+    // 编译期用官方 jar；运行时用 patchLdlib2Jar 生成的 patched 版（见下）
+    ldlib2Official("com.lowdragmc.ldlib2:ldlib2-neoforge-${minecraft_version}:${rootProject.ldlib2_version}:all") {
+        transitive = false   // :all 已 jarJar 内嵌 kotlin/yoga/taffy，避免传递依赖
+    }
+    // 运行时使用构建期自动 patch 的 LDLib2 jar（移除失效 mixin，规避进入世界崩溃）。
+    // 必须用 runtimeOnly（而非 developmentNeoNeoForge）：developmentNeoForge 中的 jar
+    // 会被 Architectury Transformer transform（需解析 LDLib2 的 EMI/KJS/AE2 等可选依赖类，
+    // 缺失即崩溃）。runtimeOnly 只进运行时 classpath，ModDiscoverer 仍能发现该 mod。
+    runtimeOnly files(patchLdlib2Task)
+    // LDLib2 的布局引擎（LDLib2 运行时经 jarJar 内嵌，编译期需显式声明）：
+    // LayoutStyle 同时支持 Yoga 与 Taffy 两套引擎
+    compileOnly("dev.vfyjxf:taffy:1.1.4")
+    compileOnly("org.appliedenergistics.yoga:yoga:1.0.0")
 //    compileOnly("dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}")
     implementation("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
     implementation("com.tterrag.registrate:Registrate:${registrate_version}")
-    implementation("curse.maven:power-grid-1321420:7999916")
+    implementation("curse.maven:power-grid-${rootProject.powergrid_version}")
     // 第三方库：需要随模组一起分发，使用 implementation + include
     implementation(include('org.apache.commons:commons-math3:3.6.1'))
     implementation(include('com.github.FiguraMC.luaj:luaj-jse:3.0.8-figura'))
     implementation(include('com.github.FiguraMC.luaj:luaj-core:3.0.8-figura'))
-    implementation "curse.maven:create-328085:7963363"
+    implementation "curse.maven:kotlin-for-forge-351264:8335665"
+    implementation "curse.maven:observable-509575:6697124"
 
     implementation 'com.google.code.gson:gson:2.11.0'
 
-    // SQLite - 通过 shadowCommon 处理（与原有逻辑一致）
+    // SQLite - 随 mod 分发（2026-08-14 修复：必须 include 才会进入 Loom dev
+    // 运行时 mod classpath——否则 Class.forName("org.sqlite.JDBC") 在 mod 类加载
+    // 器找不到驱动 → SQLException: SQLite JDBC driver not found → SQLite 从未打开
+    // → 导线无法存档/恢复。与 commons-math3 等第三方库同模式）
+    implementation(include("org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"))
     shadowCommon "org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"
-    // 同时让 NeoForge 运行时也能看到（但 shadowJar 会打包）
-    implementation "org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"
 
     // 重新声明 shadowCommon 并排除 Fabric (确保传递依赖中无 fabric-loader)
     shadowCommon(project(path: ":common", configuration: "transformProductionNeoForge")) {

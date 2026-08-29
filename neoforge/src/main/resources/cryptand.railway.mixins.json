@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.railway.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.railway.mixin.RailwayMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [],
+  "mixins": [
+    "CarriageMixin",
+    "CarriageContraptionMixin",
+    "TrainMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

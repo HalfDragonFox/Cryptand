@@ -1,0 +1,165 @@
+package com.hdf.cryptand.integratednetwork;
+
+import com.hdf.cryptand.integratednetwork.TransportEvent.Kind;
+import com.hdf.cryptand.integratednetwork.TransportGraph.Adj;
+import com.hdf.cryptand.integratednetwork.TransportGraph.InFlight;
+import com.hdf.cryptand.integratednetwork.TransportGraph.PayloadBuffer;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.PriorityQueue;
+import java.util.Random;
+
+/**
+ * 传输仿真器（2026-08-26 集成网络核心）：在纯虚拟传输图上推进物流/信号流动。
+ * <p>
+ * 【完全后台异步】——{@link #step()} 在核心线程执行（普通模式虚拟线程），主线程
+ * 只投递 TICK 消息，所有吞吐 / 延迟 / 丢包 / 路由计算都在此处完成。这就是"替代
+ * 其他 mod 严格主线程卡顿"的关键：管道 / 无线电逻辑每帧批量运算，甚至可慢于
+ * 20Hz 节拍，不影响 MC 主线程。
+ * <p>
+ * 每步（{@link #step()}）流程：
+ * <ol>
+ *   <li>【交付】在途负载剩余耗时递减，到 0 到达——目标节点 → 送达；中转节点 →
+ *       入缓冲（满则丢弃）；</li>
+ *   <li>【路由】路由表脏（拓扑变更后）→ 重算全图最短路径（每源 Dijkstra）；</li>
+ *   <li>【移动】按优先级消费节点缓冲，压入下一段边（受边吞吐量上限 + 丢包率
+ *       约束），生成在途条目。</li>
+ * </ol>
+ * 结果以帧（{@link TransportResult}）返回并缓存；可经 {@link TransportListener}
+ * 在核心线程发布。
+ */
+public final class TransportSimulator {
+
+    private final TransportGraph g;
+    private final Random rng = new Random();
+
+    public TransportSimulator(TransportGraph g) {
+        this.g = Objects.requireNonNull(g, "graph");
+    }
+
+    /** 传输图（诊断） */
+    public TransportGraph graph() {
+        return g;
+    }
+
+    /** 推进一个仿真步 → 帧结果。仅核心线程调用（对应网络的传输操作锁内）。 */
+    public TransportResult step() {
+        long t0 = System.nanoTime();
+        long tick = g.step() + 1;
+        List<TransportEvent> events = new ArrayList<>();
+        double moved = 0;
+
+        // ---- 1) 交付：在途负载剩余耗时递减；到 0 到达 ----
+        for (TransportEdge e : g.edges()) {
+            ArrayDeque<TransportGraph.InFlight> q = g.inFlight(e.id);
+            if (q == null || q.isEmpty()) continue;
+            Iterator<TransportGraph.InFlight> it = q.iterator();
+            while (it.hasNext()) {
+                TransportGraph.InFlight f = it.next();
+                if (--f.remain > 0) continue;
+                it.remove();
+                TransportPayload p = f.payload;
+                Object nodeId = e.to;
+                if (p.targetId == null || nodeId.equals(p.targetId)) {
+                    events.add(new TransportEvent(TransportEvent.Kind.DELIVERED, nodeId, p, tick, null));
+                } else if (g.inject(nodeId, p)) {
+                    events.add(new TransportEvent(TransportEvent.Kind.ARRIVED, nodeId, p, tick, null));
+                } else {
+                    events.add(new TransportEvent(TransportEvent.Kind.DROPPED, nodeId, p, tick, "capacity"));
+                }
+            }
+        }
+
+        // ---- 2) 路由：脏则重算 ----
+        if (g.routesDirty()) computeRoutes();
+
+        // ---- 3) 移动：按优先级把缓冲负载压入下一段边（吞吐/丢包约束） ----
+        Map<Long, Double> edgeMoved = new HashMap<>();
+        for (Object nodeId : new ArrayList<>(g.bufferKeys())) {
+            TransportGraph.PayloadBuffer b = g.buffer(nodeId);
+            List<TransportPayload> items = b.snapshot();
+            if (items.isEmpty()) continue;
+            // 稳定消费：优先级降序（同优先级 = 快照顺序 先入先出）
+            items.sort(Comparator.comparingInt((TransportPayload p) -> p.priority).reversed());
+            for (TransportPayload p : items) {
+                Object next = g.nextHop(nodeId, p.targetId);
+                if (next == null) continue;              // 无路由 → 滞留缓冲
+                TransportEdge e = g.edgeToward(nodeId, next);
+                if (e == null || !e.accepts(p.type)) continue;
+                double used = edgeMoved.getOrDefault(e.id, 0.0);
+                if (e.throughput > 0 && used + p.amount > e.throughput + 1e-9) continue;
+                if (!b.remove(p)) continue;              // 可能已被并发注入/消费
+                if (e.loss > 0 && rng.nextDouble() < e.loss) {
+                    events.add(new TransportEvent(TransportEvent.Kind.DROPPED, nodeId, p, tick, "loss"));
+                    continue;
+                }
+                g.enqueueInFlight(e.id, new TransportGraph.InFlight(p, e.latencyTicks));
+                edgeMoved.put(e.id, used + p.amount);
+                moved += p.amount;
+            }
+        }
+
+        g.incrementStep();
+        return new TransportResult(tick, events, moved, g.pending(), System.nanoTime() - t0);
+    }
+
+    /**
+     * 重算全图路由表（每源 Dijkstra 最短路径 → 下一跳）。
+     * 拓扑变更后无需显式调用——{@link #step()} 检测路由脏会自动重算；本方法供
+     * {@code ROUTE} 操作显式触发（只刷新路由，不推进流动）。
+     */
+    public void computeRoutes() {
+        Map<Object, Map<Object, Object>> r = new HashMap<>();
+        for (TransportNode src : g.nodes()) {
+            r.put(src.id, dijkstraNextHops(src.id));
+        }
+        g.setRoutes(r);
+        g.markRoutesClean();
+    }
+
+    /** 从 src 到全图可达节点的最短路径【下一跳】表（不含 src 自身）；边代价即 cost。 */
+    private Map<Object, Object> dijkstraNextHops(Object src) {
+        Map<Object, Double> dist = new HashMap<>();
+        Map<Object, Object> firstHop = new HashMap<>(); // target → 从 src 出发的第一跳
+        PriorityQueue<Entry> pq = new PriorityQueue<>(Comparator.comparingDouble(e -> e.dist));
+        dist.put(src, 0.0);
+        pq.add(new Entry(src, 0.0));
+        while (!pq.isEmpty()) {
+            Entry top = pq.poll();
+            Object u = top.id;
+            double d = top.dist;
+            if (d > dist.getOrDefault(u, Double.POSITIVE_INFINITY) + 1e-9) continue; // 过期条目
+            for (TransportGraph.Adj adj : g.adjacent(u)) {
+                TransportEdge e = g.edge(adj.edgeId);
+                if (e == null) continue;
+                Object v = adj.node;
+                double nd = d + Math.max(0.001, e.cost); // cost<=0 兜底 0.001
+                if (nd < dist.getOrDefault(v, Double.POSITIVE_INFINITY) - 1e-9) {
+                    Object hop = u.equals(src) ? v : firstHop.getOrDefault(u, v);
+                    dist.put(v, nd);
+                    firstHop.put(v, hop);
+                    pq.add(new Entry(v, nd));
+                }
+            }
+        }
+        return firstHop;
+    }
+
+    /** Dijkstra 队列条目（惰性过期：poll 后按 dist 校验，满足失效节点） */
+    private static final class Entry {
+        final Object id;
+        final double dist;
+
+        Entry(Object id, double dist) {
+            this.id = id;
+            this.dist = dist;
+        }
+    }
+}

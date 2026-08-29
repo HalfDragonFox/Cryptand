@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.cee.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.cee.mixin.CeeMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [],
+  "mixins": [
+    "CeePantographBlockEntityMixin",
+    "CeeVoxelWireItemMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

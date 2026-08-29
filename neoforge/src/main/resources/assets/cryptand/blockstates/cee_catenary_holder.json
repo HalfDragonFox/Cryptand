@@ -1,0 +1,16 @@
+{
+  "variants": {
+    "style=standard": {
+      "model": "cryptand:block/cee_catenary_holder/block"
+    },
+    "style=weathered": {
+      "model": "cryptand:block/cee_catenary_holder/block"
+    },
+    "style=low": {
+      "model": "cryptand:block/cee_catenary_holder/block_low"
+    },
+    "style=weathered_low": {
+      "model": "cryptand:block/cee_catenary_holder/block_low"
+    }
+  }
+}

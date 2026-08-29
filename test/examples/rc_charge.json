@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "RC 充放电",
+  "components": [
+    { "type": "vsource",   "x": 80,  "y": 120, "rotation": 180, "params": { "voltage": 5 } },
+    { "type": "resistor",  "x": 280, "y": 120, "rotation": 0, "params": { "resistance": 1000 } },
+    { "type": "capacitor", "x": 450, "y": 120, "rotation": 0, "params": { "capacitance": 0.0001 } },
+    { "type": "ground",    "x": 540, "y": 120, "rotation": 0, "params": {} },
+    { "type": "ground",    "x": 30,  "y": 200, "rotation": 0, "params": {} }
+  ],
+  "wires": [
+    [ { "x": 130, "y": 120 }, { "x": 230, "y": 120 } ],
+    [ { "x": 330, "y": 120 }, { "x": 400, "y": 120 } ],
+    [ { "x": 500, "y": 120 }, { "x": 540, "y": 120 } ],
+    [ { "x": 30,  "y": 120 }, { "x": 30,  "y": 200 } ]
+  ],
+  "probes": [ { "x": 400, "y": 120 } ]
+}

@@ -2,6 +2,11 @@ architectury {
     common(rootProject.enabled_platforms.split(","))
 }
 
+repositories {
+    // LDLib2 官方发布仓库（EDA UI 编译期依赖）
+    maven { url = "https://maven.firstdark.dev/snapshots" }
+}
+
 loom {
     accessWidenerPath = file("src/main/resources/examplemod.accesswidener")
 }
@@ -27,4 +32,185 @@ publishing {
     repositories {
         // Add repositories to publish to here.
     }
+}
+
+// 互感双半模型收敛自测（2026-08-13，纯引擎无 Minecraft）：
+//   ./gradlew :common:runCouplerTest
+tasks.register('runCouplerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run transformer half-model coupler convergence self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.TransformerCouplerSelfTest'
+}
+
+// 多频叠加（WaveformGroup/MultiToneSolver，PLC 核心）自测（2026-08-13）：
+//   ./gradlew :common:runMultiToneTest
+tasks.register('runMultiToneTest', JavaExec) {
+    group = 'verification'
+    description = 'Run multi-tone superposition self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.MultiToneSelfTest'
+}
+
+// 定时任务调度（微秒级，mod 定时触发入口）自测（2026-08-13）：
+//   ./gradlew :common:runTimerTest
+tasks.register('runTimerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run ThreadDispatcher microsecond timer scheduling self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.compute.TimerSelfTest'
+}
+
+// 网表相关操作类 + 虚拟线程自测（2026-08-16，用户架构核心）：
+//   ./gradlew :common:runNetOpTest
+tasks.register('runNetOpTest', JavaExec) {
+    group = 'verification'
+    description = 'Run netlist-operation record table + virtual thread self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.netop.NetOpSelfTest'
+}
+
+// 集成网络核心自测（2026-08-26，用户架构：传输/物流/无线电异步核心，完全后台）：
+//   ./gradlew :common:runTransportTest
+tasks.register('runTransportTest', JavaExec) {
+    group = 'verification'
+    description = 'Run integrated network core transport async self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.integratednetwork.IntegratedNetworkCoreSelfTest'
+}
+
+// AC源 + 电阻 + 导线回路仿真自测（2026-08-16，用户要求）：
+//   ./gradlew :common:runAcResistorWireTest
+tasks.register('runAcResistorWireTest', JavaExec) {
+    group = 'verification'
+    description = 'Run AC source + resistor + wire loop simulation self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.AcResistorWireSelfTest'
+}
+
+// 孤立/开路源开路电压自测（2026-08-20，用户要求"开路也能测到正常电压"）：
+//   ./gradlew :common:runOpenSourceTest
+tasks.register('runOpenSourceTest', JavaExec) {
+    group = 'verification'
+    description = 'Run isolated/open source open-circuit voltage self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.OpenSourceSelfTest'
+}
+
+// DC 电容充电自测（2026-08-21，用户：1F+30V DC 应瞬态充电而非恒流/无法存电）：
+//   ./gradlew :common:runCapacitorChargeTest
+tasks.register('runCapacitorChargeTest', JavaExec) {
+    group = 'verification'
+    description = 'Run DC capacitor charging transient self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.CapacitorChargeSelfTest'
+}
+
+// DC 电感不短路自测（2026-08-21，用户：DC 走相量后导线电流 615A——电感 ω=0
+//   Y=1/jωL=∞ 短路；修复 Backward Euler 后电流收敛 15A）：
+//   ./gradlew :common:runInductorTest
+tasks.register('runInductorTest', JavaExec) {
+    group = 'verification'
+    description = 'Run DC inductor no-short self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.InductorDCSelfTest'
+}
+
+// 仿真核心自测（2026-08-16，用户架构：核心与 MC 解耦，可独立运行）：
+//   ./gradlew :common:runSimCoreTest
+tasks.register('runSimCoreTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SimulationCore (dispatcher + async manager + netop) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.core.SimulationCoreSelfTest'
+}
+
+// 求解节点化流水线自测（2026-08-19，节点化求解架构）：
+//   ./gradlew :common:runPipelineTest
+tasks.register('runPipelineTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SolvePipeline (decomposer + node graph + threshold parallel) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.core.SolvePipelineSelfTest'
+}
+
+// 网络图存储自测（2026-08-19，算法下沉：核心自动拆合/合并）：
+//   ./gradlew :common:runGraphStoreTest
+tasks.register('runGraphStoreTest', JavaExec) {
+    group = 'verification'
+    description = 'Run NetworkGraphStore (merge/split/idempotent/compact) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.netgraph.NetworkGraphStoreSelfTest'
+}
+
+// 网络世界组件自测（2026-08-22，实例统管对话+缓存数据+消息）：
+//   ./gradlew :common:runWorldTest
+tasks.register('runWorldTest', JavaExec) {
+    group = 'verification'
+    description = 'Run NetworkWorld (dialogue + cache data + message) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.cache.NetworkWorldSelfTest'
+}
+
+// 网络世界图算法自测（2026-08-22，数据层迁移：合并/分裂/设备/一致性）：
+//   ./gradlew :common:runWorldGraphTest
+tasks.register('runWorldGraphTest', JavaExec) {
+    group = 'verification'
+    description = 'Run NetworkWorld graph algorithm (merge/split/device/consistency) test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.cache.NetworkWorldGraphSelfTest'
+}
+
+// 原理图导出核心扩展自测（2026-08-22，导出请求→虚拟电路直接导出）：
+//   ./gradlew :common:runSchematicExportTest
+tasks.register('runSchematicExportTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SchematicExport (core extension: export virtual circuit via request) test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.export.SchematicExportSelfTest'
+}
+
+// 通信组件自测（2026-08-22，TCP/UDP/进程内消息与实例隔离交互）：
+//   ./gradlew :common:runCommTest
+tasks.register('runCommTest', JavaExec) {
+    group = 'verification'
+    description = 'Run Comm (TCP/UDP/in-process transport + hub + client) test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.comm.CommSelfTest'
+}
+
+// 触发/中断调度器自测（2026-08-22，嵌入式中断模式 + 触发任务）：
+//   ./gradlew :common:runTriggerTest
+tasks.register('runTriggerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run TriggerDispatcher (edge-triggered ISR / event-driven) test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.compute.TriggerDispatcherSelfTest'
+}
+
+// 电动机反电动势闭环自测（2026-08-19，修复"连接电机导线就消失"）：
+//   ./gradlew :common:runMotorEmfTest
+tasks.register('runMotorEmfTest', JavaExec) {
+    group = 'verification'
+    description = 'Run motor back-EMF closed loop (start inrush -> speed up -> low no-load current) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.MotorEmfSelfTest'
+}
+
+// 动力学模型统一自测（2026-08-20，能量/温度/转速统一用 DynamicsModel）：
+//   ./gradlew :common:runDynamicsTest
+tasks.register('runDynamicsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run unified dynamics model (inertia/thermal/energy) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.model.dynamics.DynamicsModelSelfTest'
+}
+
+// 电机电路导线发热复现（2026-08-20，排查"5A 电流导线 300°C"）：
+//   ./gradlew :common:runMotorWireHeatCheck
+tasks.register('runMotorWireHeatCheck', JavaExec) {
+    group = 'verification'
+    description = 'Reproduce motor circuit wire heating (5A current but 300C?)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.MotorWireHeatCheck'
 }

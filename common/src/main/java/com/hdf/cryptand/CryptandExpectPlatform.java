@@ -24,4 +24,14 @@ public class CryptandExpectPlatform {
         // Just throw an error, the content should get replaced at runtime.
         throw new AssertionError();
     }
+
+    /**
+     * EDA 电路图目录：<gamedir>/cryptand/circuits/（EDA 打开/保存默认目录）。
+     * 各平台实现（neoforge: FMLPaths.GAMEDIR；fabric: FabricLoader 游戏目录）。
+     */
+    @ExpectPlatform
+    public static Path circuitsDir() {
+        // Just throw an error, the content should get replaced at runtime.
+        throw new AssertionError();
+    }
 }

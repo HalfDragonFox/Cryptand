@@ -1,0 +1,58 @@
+{
+  "variants": {
+    "axis_along_first=false,facing=down": {
+      "model": "cryptand:block/capacitor_v",
+      "y": 90
+    },
+    "axis_along_first=false,facing=east": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 90
+    },
+    "axis_along_first=false,facing=north": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 90,
+      "y": -90
+    },
+    "axis_along_first=false,facing=south": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 90,
+      "y": 90
+    },
+    "axis_along_first=false,facing=up": {
+      "model": "cryptand:block/capacitor_v",
+      "x": 180,
+      "y": 90
+    },
+    "axis_along_first=false,facing=west": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 90,
+      "y": 180
+    },
+    "axis_along_first=true,facing=down": {
+      "model": "cryptand:block/capacitor_v"
+    },
+    "axis_along_first=true,facing=east": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 180
+    },
+    "axis_along_first=true,facing=north": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 180,
+      "y": -90
+    },
+    "axis_along_first=true,facing=south": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 180,
+      "y": 90
+    },
+    "axis_along_first=true,facing=up": {
+      "model": "cryptand:block/capacitor_v",
+      "x": 180
+    },
+    "axis_along_first=true,facing=west": {
+      "model": "cryptand:block/capacitor_h",
+      "x": 180,
+      "y": 180
+    }
+  }
+}

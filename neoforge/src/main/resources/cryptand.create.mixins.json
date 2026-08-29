@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.create.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.create.mixin.CreateMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [],
+  "mixins": [
+    "KineticBlockEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

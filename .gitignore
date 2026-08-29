@@ -38,3 +38,19 @@ fabric/run/
 neoforge/.gradle/
 neoforge/build/
 neoforge/run/
+
+# AI 信息归档：不入库（AI 生成的信息/文档/输出）
+info/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# AI 临时目录
+.tmp-*/
+
+# AI 生成内容统一归档（2026-08-29：反编译/日志/脚本/架构图等一律归此目录，不入库）
+.ai_cache/
+
+# 废弃/弃置代码
+弃置区/

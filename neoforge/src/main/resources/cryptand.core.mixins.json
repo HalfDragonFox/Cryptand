@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.core.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.core.mixin.CoreMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+    "PlacementOverlayMixin",
+    "OscilloscopeHudMixin",
+    "CryptandValueSettingsScreenMixin"
+  ],
+  "mixins": [
+    "AbstractRegistrateConcurrencyMixin",
+    "ThreadDispatchDebugMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

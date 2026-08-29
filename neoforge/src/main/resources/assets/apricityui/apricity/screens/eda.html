@@ -1,0 +1,3471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EDA Circuit Editor</title>
+<style>
+/* AUI: CSS 1px = 1 physical pixel, scale ~2.2x vs browser 13px */
+:root{
+  --bg:#0d0f15; --bg2:#12151d; --bg3:#171b26; --border:#232a38;
+  --text:#d7dee8; --text-dim:#8b95a7; --accent:#4da6ff; --accent2:#4fc3f7;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{background:var(--bg); color:var(--text); font-family:"Segoe UI","Noto Sans","Microsoft YaHei",sans-serif; font-size:24px; overflow:hidden;}
+#app{display:flex; flex-direction:column; height:100%;}
+
+/* ---------- 顶部工具栏 ---------- */
+#toolbar{flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; background:var(--bg2); border-bottom:1px solid var(--border); padding:8px 12px; user-select:none; max-height:120px; overflow-y:auto; gap:4px;}
+.tb-group{display:flex; align-items:center; gap:6px; padding:0 16px; border-right:1px solid var(--border); flex-wrap:wrap;}
+.tb-group:last-child{border-right:none;}
+.tb-label{font-size:20px; color:var(--text-dim); margin-right:8px; white-space:nowrap;}
+.tb-btn{background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 14px; font-size:22px; cursor:pointer; white-space:nowrap;}
+.tb-btn:hover{background:#1e2533; border-color:#33405a;}
+.tb-btn.active{background:#1b2c44; border-color:var(--accent); color:#cfe6ff;}
+.tb-btn:disabled{opacity:.45; cursor:not-allowed;}
+.tb-check{display:flex; align-items:center; gap:6px; color:var(--text-dim); font-size:22px; white-space:nowrap; cursor:pointer;}
+.tb-check input{accent-color:var(--accent); width:22px; height:22px;}
+.tb-color{width:52px; height:44px; padding:0; border:1px solid var(--border); border-radius:8px; background:var(--bg3); cursor:pointer;}
+.tb-num{width:90px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:4px 8px; font-size:22px;}
+.tb-select{background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:4px 8px; font-size:22px;}
+.tb-text{width:300px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 12px; font-size:22px;}
+.kstatus{font-size:22px; font-weight:600; padding:4px 16px; border-radius:8px; white-space:nowrap; border:1px solid var(--border); cursor:default;}
+.kstatus.online{color:#7ee787; border-color:#2e5c3a; background:#0e2414;}
+.kstatus.offline{color:#ff7b72; border-color:#5c2e2e; background:#2a1010;}
+.kstatus.checking{color:#d29922; border-color:#5c4a1e; background:#241c0e;}
+.prop-select{background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:4px 12px; font-size:22px; width:220px;}
+
+/* ---------- 主布局 ---------- */
+#main{flex:1; display:flex; min-height:0;}
+
+/* ---------- 左侧元件库 ---------- */
+#palette{flex:0 0 360px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; min-height:0;}
+.side-title{padding:16px 20px; font-weight:600; color:var(--text-dim); border-bottom:1px solid var(--border); font-size:24px; letter-spacing:1px;}
+#palette-list{flex:1; overflow-y:auto; padding:12px;}
+.pal-group{margin-bottom:20px;}
+.pal-title{font-size:20px; color:var(--text-dim); padding:4px 12px; margin-bottom:4px;}
+.pal-body{display:flex; flex-wrap:wrap; gap:12px;}
+.pal-item{width:150px; background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:10px 8px 8px; text-align:center; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:4px;}
+.pal-item:hover{border-color:#33405a; background:#1a202c;}
+.pal-item.active{border-color:var(--accent); background:#16263c;}
+.pal-sym{width:96px; height:56px; display:flex; align-items:center; justify-content:center; font-family:Consolas,monospace; font-size:26px; font-weight:bold; color:#cfe6ff;}
+.pal-name{font-size:20px; color:var(--text-dim);}
+
+/* ---------- 画布 ---------- */
+#canvas-wrap{flex:1; position:relative; min-width:0; background:var(--bg);}
+#canvas{position:absolute; inset:0; width:100%; height:100%; display:block; cursor:default;}
+#toast{position:absolute; top:20px; left:50%; transform:translateX(-50%); background:#1b2c44; border:1px solid var(--accent); color:#cfe6ff; padding:12px 28px; border-radius:12px; font-size:24px; opacity:0; transition:opacity .25s; pointer-events:none; z-index:10; white-space:nowrap;}
+#toast.show{opacity:1;}
+
+/* ---------- 右侧面板 ---------- */
+#side{flex:0 0 560px; background:var(--bg2); border-left:1px solid var(--border); overflow-y:auto; min-height:0;}
+.panel{border-bottom:1px solid var(--border); padding:16px 20px;}
+.panel-title{font-size:24px; font-weight:600; color:var(--text-dim); letter-spacing:1px; margin-bottom:12px;}
+.panel-title.sub{margin-top:20px;}
+.hint{color:var(--text-dim); font-size:22px;}
+.row{display:flex; align-items:center; justify-content:space-between; gap:16px; margin:8px 0; font-size:22px;}
+.row span{color:var(--text-dim); white-space:nowrap;}
+.row input[type=text], .row input:not([type=checkbox]){width:220px; background:var(--bg3); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 12px; font-size:22px;}
+.prop-name{font-weight:600; margin-bottom:12px; color:var(--accent);}
+.switch{display:inline-flex;}
+.switch input{accent-color:var(--accent); width:auto!important; height:auto!important;}
+.prog{flex:1; background:var(--bg3); height:16px; border-radius:8px; overflow:hidden; margin-left:16px;}
+#sim-prog{height:100%; width:0%; background:var(--accent); transition:width .1s;}
+.sim-status{font-size:22px; color:var(--accent2); margin-top:12px; min-height:32px;}
+
+.res-meta{font-size:20px; color:var(--accent2); margin-bottom:8px;}
+.row .val{color:#cfe6ff; font-family:Consolas,monospace;}
+
+/* ---------- 结果表格与波形 ---------- */
+.res-table{width:100%; border-collapse:collapse; font-size:20px; margin-bottom:16px;}
+.res-table th{color:var(--text-dim); text-align:left; padding:4px 8px; border-bottom:1px solid var(--border);}
+.res-table td{padding:4px 8px; border-bottom:1px solid #1a1f2b; font-family:Consolas,monospace;}
+#wave{width:100%; height:300px; display:block; border:1px solid var(--border); border-radius:8px;}
+#wave-legend{font-size:20px; margin-top:8px; display:flex; gap:20px; flex-wrap:wrap;}
+
+/* ---------- 状态栏 ---------- */
+#statusbar{flex:0 0 52px; display:flex; align-items:center; gap:36px; background:var(--bg2); border-top:1px solid var(--border); padding:0 24px; font-size:22px; color:var(--text-dim); white-space:nowrap; overflow:hidden;}
+#status-coords{margin-left:auto; font-family:Consolas,monospace;}
+
+/* ---------- 右键菜单 ---------- */
+#ctxmenu{position:fixed; display:none; background:var(--bg2); border:1px solid var(--border); border-radius:12px; min-width:260px; z-index:100; box-shadow:0 6px 18px rgba(0,0,0,.5); overflow:hidden;}
+.ctx-item{padding:12px 24px; font-size:22px; cursor:pointer;}
+.ctx-item:hover{background:#1b2c44; color:#cfe6ff;}
+
+/* ---------- 弹窗 ---------- */
+.modal{position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:200;}
+.modal.hidden{display:none;}
+.modal-box{background:var(--bg2); border:1px solid var(--border); border-radius:20px; padding:36px 44px; max-width:880px; width:92%; max-height:80vh; overflow-y:auto;}
+.modal-box h3{margin-bottom:20px; color:var(--accent); font-size:30px;}
+.modal-box ul{margin-left:36px; font-size:22px; line-height:1.9; color:var(--text-dim);}
+.modal-box button{margin-top:24px; background:var(--accent); color:#06233f; border:none; border-radius:12px; padding:12px 32px; cursor:pointer; font-weight:600; font-size:24px;}
+.tpl-list{display:flex; flex-direction:column; gap:16px;}
+.tpl-btn{background:var(--bg3); border:1px solid var(--border); color:var(--text); border-radius:12px; padding:16px; cursor:pointer; text-align:left; font-size:24px;}
+.tpl-btn:hover{border-color:var(--accent);}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:18px; height:18px;}
+::-webkit-scrollbar-thumb{background:#2a3342; border-radius:10px;}
+::-webkit-scrollbar-thumb:hover{background:#3a4657;}
+::-webkit-scrollbar-track{background:transparent;}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 顶部工具栏 -->
+  <div id="toolbar">
+    <div class="tb-group">
+      <span class="tb-label">File</span>
+      <button class="tb-btn" id="btn-open">Open</button>
+      <button class="tb-btn" id="btn-save">Save</button>
+      <button class="tb-btn" id="btn-examples">Examples</button>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">Edit</span>
+      <button class="tb-btn" id="btn-undo">Undo</button>
+      <button class="tb-btn" id="btn-redo">Redo</button>
+      <button class="tb-btn" id="btn-dup">Copy</button>
+      <button class="tb-btn" id="btn-del">Delete</button>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">Tool</span>
+      <button class="tb-btn active" id="btn-select">Select</button>
+      <button class="tb-btn" id="btn-wire">Wire</button>
+      <button class="tb-btn" id="btn-probe">Probe</button>
+      <button class="tb-btn" id="btn-rotate">Rotate</button>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">Sim</span>
+      <button class="tb-btn" id="btn-dc">DC</button>
+      <button class="tb-btn" id="btn-trans">Transient</button>
+      <button class="tb-btn" id="btn-stop">Stop</button>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">View</span>
+      <button class="tb-btn" id="btn-zoomin">Zoom+</button>
+      <button class="tb-btn" id="btn-zoomout">Zoom-</button>
+      <button class="tb-btn" id="btn-fit">Fit</button>
+      <label class="tb-check"><input type="checkbox" id="chk-grid" checked>Grid</label>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">Wire</span>
+      <select class="tb-select" id="sel-wiretype">
+        <option value="copper" selected>Copper</option>
+        <option value="iron">Iron</option>
+        <option value="gold">Gold</option>
+      </select>
+      <label class="tb-check"><input type="checkbox" id="chk-ortho" checked>Ortho</label>
+      <label class="tb-check"><input type="checkbox" id="chk-res" checked>Resistive</label>
+      <label class="tb-check"><input type="checkbox" id="chk-showres" checked>Show W</label>
+      <input type="color" class="tb-color" id="wire-color" value="#4fc3f7">
+    </div>
+  </div>
+
+  <!-- 主区域 -->
+  <div id="main">
+    <!-- 左侧元件库 -->
+    <div id="palette">
+      <div class="side-title">COMPONENTS</div>
+      <div id="palette-list"></div>
+    </div>
+
+    <!-- 画布 -->
+    <div id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="toast"></div>
+      <div id="ctxmenu"></div>
+    </div>
+
+    <!-- 右侧面板 -->
+    <div id="side">
+      <div class="panel">
+        <div class="panel-title">PROPERTIES</div>
+        <div id="prop-body"><div class="hint">Select a component to edit its parameters.</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">SIMULATION</div>
+        <div class="row"><span>DC Analysis</span>
+          <label class="switch"><input type="checkbox" id="chk-dc" checked></label></div>
+        <div class="row"><span>Transient</span>
+          <label class="switch"><input type="checkbox" id="chk-trans"></label></div>
+        <div class="row"><span>Steps</span><input type="text" id="sim-steps" value="500"></div>
+        <div class="row"><span>End Time (s)</span><input type="text" id="sim-end" value="0.1"></div>
+        <div class="row"><span>Max Step (s)</span><input type="text" id="sim-maxstep" value="0.001"></div>
+        <div class="row"><span>Winding Leak</span><input type="text" id="sim-leak" value="0.001"></div>
+        <div class="row"><span>Use Coil Model</span>
+          <label class="switch"><input type="checkbox" id="chk-coil" checked></label></div>
+        <div class="row"><span>Runtime</span><span class="val" id="sim-runtime">-</span></div>
+        <div class="row"><span>Progress</span><div class="prog"><div id="sim-prog"></div></div></div>
+        <div class="sim-status" id="sim-status"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">RESULTS</div>
+        <div id="res-body"><div class="hint">Run a simulation to see results.</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">WAVEFORM</div>
+        <canvas id="wave" width="520" height="300"></canvas>
+        <div id="wave-legend"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div id="statusbar">
+    <span id="status-mode">Select</span>
+    <span id="status-rot">Rot 0</span>
+    <span id="st-c">Components 0</span>
+    <span id="status-wires">Wires 0</span>
+    <span id="status-nodes">Nodes 0</span>
+    <span id="status-probes">Probes 0</span>
+    <span id="status-coords">0, 0</span>
+  </div>
+</div>
+
+<!-- 示例弹窗 -->
+<div class="modal hidden" id="modal-examples">
+  <div class="modal-box">
+    <h3>Example Circuits</h3>
+    <div class="tpl-list" id="example-list"></div>
+    <button id="btn-close-ex">Close</button>
+  </div>
+</div>
+
+<div class="modal hidden" id="modal-open">
+  <div class="modal-box">
+    <h3>Open Circuit</h3>
+    <div class="tpl-list" id="open-list"></div>
+    <button id="btn-close-open">Close</button>
+  </div>
+</div>
+
+<!-- AUI bridge: hidden inputs (Java reads/writes these) -->
+<input type="hidden" id="cryptand-json" value="">
+<input type="hidden" id="cryptand-req" value="">
+<input type="hidden" id="cryptand-resp" value="">
+
+<div class="modal hidden" id="modal-help">
+  <div class="modal-box">
+    <h3>Shortcuts</h3>
+    <ul>
+      <li>W - Wire mode</li>
+      <li>P - Probe mode</li>
+      <li>R - Rotate selected</li>
+      <li>Del - Delete selected</li>
+      <li>Ctrl+D - Duplicate</li>
+      <li>Ctrl+Z / Ctrl+Y - Undo / Redo</li>
+      <li>Ctrl+S - Save</li>
+      <li>Ctrl+O - Open</li>
+      <li>Space - Select mode</li>
+      <li>Wheel - Zoom</li>
+      <li>Arrow keys - Pan</li>
+    </ul>
+    <button id="help-close">Close</button>
+  </div>
+</div>
+
+<script>
+// ============ EDA Circuit Editor (AUI port of test/) ============
+// AUI constraints: no Blob/FileReader/confirm/fetch; canvas.width via setAttribute;
+// y-axis DOWN (same as test); ES6 supported (let/const/arrow/class/Map).
+var GRID = 20;
+var Vt = 0.02585;
+var WIRE_AMBIENT = 20;
+var PROBE_COLORS = ['#ff5252', '#ffab40', '#ffee58', '#69f0ae', '#40c4ff', '#b388ff'];
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+var WIRE_TYPES = {
+  copper: { name: 'Copper', resistancePerMeter: 0.00075, ratedCurrent: 80, thermalConductance: 2.0, heatCapacity: 5, maxTemp: 200 },
+  iron:   { name: 'Iron',   resistancePerMeter: 0.0025,  ratedCurrent: 80, thermalConductance: 2.0, heatCapacity: 5, maxTemp: 200 },
+  golden: { name: 'Gold',   resistancePerMeter: 0.0015,  ratedCurrent: 80, thermalConductance: 2.0, heatCapacity: 5, maxTemp: 200 }
+};
+
+function blendHex(a, b, k) {
+  var pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  var r = Math.round(((pa >> 16) & 255) * (1 - k) + ((pb >> 16) & 255) * k);
+  var g = Math.round(((pa >> 8) & 255) * (1 - k) + ((pb >> 8) & 255) * k);
+  var bl = Math.round((pa & 255) * (1 - k) + (pb & 255) * k);
+  return '#' + ((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1);
+}
+
+function formatSI(v, unit) {
+  if (unit === undefined) unit = '';
+  if (!isFinite(v)) return '\u221E';
+  var a = Math.abs(v);
+  var prefixes = [['p', 1e-12], ['n', 1e-9], ['\u00B5', 1e-6], ['m', 1e-3], ['', 1], ['k', 1e3], ['M', 1e6], ['G', 1e9]];
+  for (var i = prefixes.length - 1; i >= 0; i--) {
+    if (a >= prefixes[i][1]) return trimNum(v / prefixes[i][1]) + prefixes[i][0] + unit;
+  }
+  return trimNum(v) + unit;
+}
+function trimNum(x) { return String(Math.round(x * 1e6) / 1e6); }
+
+function parseSI(str) {
+  if (typeof str === 'number') return str;
+  var s = String(str).trim().toLowerCase();
+  s = s.replace(/[\u03A9\u03C9]/g, '').replace(/ohm|ohms/g, '');
+  s = s.replace(/[fhvawsz]$/, '');
+  var m = /^([+-]?[0-9]*\.?[0-9]+(?:e[+-]?[0-9]+)?)\s*(meg|[pnum\u00B5kg])?$/.exec(s);
+  if (!m) return NaN;
+  var val = parseFloat(m[1]);
+  var suf = m[2] || '';
+  var mult = { p: 1e-12, n: 1e-9, '\u00B5': 1e-6, u: 1e-6, m: 1e-3, k: 1e3, meg: 1e6, g: 1e9 }[suf] || 1;
+  return val * mult;
+}
+
+function absTerminal(comp, i) {
+  var def = COMPONENT_DEFS[comp.type];
+  var t = def.terminals[i];
+  var r = comp.rotation * Math.PI / 180;
+  return {
+    x: Math.round(comp.x + t.dx * Math.cos(r) - t.dy * Math.sin(r)),
+    y: Math.round(comp.y + t.dx * Math.sin(r) + t.dy * Math.cos(r))
+  };
+}
+
+var COMPONENT_GROUPS = ['Passive', 'Machines', 'Power', 'Three-Phase', 'Radio', 'Semiconductor', 'Other'];
+var COMPONENT_DEFS = {};
+function defType(type, o) { o.type = type; COMPONENT_DEFS[type] = o; }
+
+function label(ctx, y, c, def) {
+  ctx.save();
+  ctx.font = '10px Consolas, monospace';
+  ctx.fillStyle = '#93a0b3';
+  ctx.textAlign = 'center';
+  ctx.fillText(def.valueOf(c), 0, y);
+  ctx.restore();
+}
+
+// ---------------- Passive ----------------
+defType('resistor', {
+  name: 'Resistor', group: 'Passive', short: 'R',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 1000, tempCoef: 0, thermalConductance: 0, heatCapacity: 0 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-32, 0);
+    ctx.lineTo(-22, -12); ctx.lineTo(-7, 12); ctx.lineTo(7, -12); ctx.lineTo(22, 12); ctx.lineTo(32, 0);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    label(ctx, 26, c, def);
+  }
+});
+
+defType('potentiometer', {
+  name: 'Potentiometer', group: 'Passive', short: 'RV',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 10000, wiper: 0.5 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'wiper', label: 'Wiper', unit: '' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-32, 0);
+    ctx.lineTo(-22, -12); ctx.lineTo(-7, 12); ctx.lineTo(7, -12); ctx.lineTo(22, 12); ctx.lineTo(32, 0);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-7, 12); ctx.lineTo(0, -20);
+    ctx.stroke();
+    label(ctx, 32, c, def);
+  }
+});
+
+defType('capacitor', {
+  name: 'Capacitor', group: 'Passive', short: 'C',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { capacitance: 1e-4 },
+  paramDefs: [{ key: 'capacitance', label: 'Capacitance', unit: 'F' }],
+  valueOf: function(c) { return formatSI(c.params.capacitance, 'F'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-12, 0);
+    ctx.moveTo(12, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-12, -20); ctx.lineTo(-12, 20);
+    ctx.moveTo(12, -20); ctx.lineTo(12, 20);
+    ctx.stroke();
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('inductor', {
+  name: 'Inductor', group: 'Passive', short: 'L',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { inductance: 0.01, resistance: 0.1, tempCoef: 0.0039, thermalConductance: 0, heatCapacity: 0 },
+  paramDefs: [
+    { key: 'inductance', label: 'Inductance', unit: 'H' },
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-30, 0);
+    for (var i = 0; i < 4; i++) ctx.arc(-22.5 + i * 15, 0, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('lamp', {
+  name: 'Lamp', group: 'Passive', short: 'LP',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 100, tempCoef: 0.0045, thermalConductance: 0.1, heatCapacity: 2 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-8, -10); ctx.lineTo(-8, 10);
+    ctx.moveTo(8, -10); ctx.lineTo(8, 10);
+    ctx.moveTo(-8, 0); ctx.lineTo(8, 0);
+    ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+// ---------------- Machines ----------------
+defType('fan', {
+  name: 'Fan', group: 'Machines', short: 'FAN',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 8, inductance: 0.02, tempCoef: 0.0039, thermalConductance: 0.8, heatCapacity: 30 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(0, -17);
+    ctx.moveTo(0, 0); ctx.lineTo(14.7, 8.5);
+    ctx.moveTo(0, 0); ctx.lineTo(-14.7, 8.5);
+    ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('motor', {
+  name: 'Motor', group: 'Machines', short: 'M',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 5, inductance: 0.05, tempCoef: 0.0039, thermalConductance: 1.0, heatCapacity: 50 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('electromagnet', {
+  name: 'Electromagnet', group: 'Machines', short: 'EM',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 20, inductance: 0.5, tempCoef: 0.0039, thermalConductance: 0.5, heatCapacity: 100 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-30, 0);
+    for (var i = 0; i < 4; i++) ctx.arc(-22.5 + i * 15, 0, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-13, -18); ctx.lineTo(-13, 18);
+    ctx.moveTo(-5, -20); ctx.lineTo(-5, 20);
+    ctx.stroke();
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('heater', {
+  name: 'Heater', group: 'Machines', short: 'HTR',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 50, tempCoef: 0.0004, thermalConductance: 0.3, heatCapacity: 10 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-32, 0);
+    ctx.lineTo(-22, -12); ctx.lineTo(-7, 12); ctx.lineTo(7, -12); ctx.lineTo(22, 12); ctx.lineTo(32, 0);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-26, -22); ctx.quadraticCurveTo(-16, -30, -6, -22);
+    ctx.moveTo(-6, -24); ctx.quadraticCurveTo(4, -32, 14, -24);
+    ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('generator', {
+  name: 'Generator', group: 'Machines', short: 'GEN',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { voltage: 10, resistance: 0.5, tempCoef: 0, thermalConductance: 0, heatCapacity: 0 },
+  paramDefs: [
+    { key: 'voltage', label: 'Voltage', unit: 'V' },
+    { key: 'resistance', label: 'Arm R', unit: '\u03A9' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.voltage, 'V'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('G', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('transformer', {
+  name: 'Transformer', group: 'Machines', short: 'T',
+  terminals: [{ dx: -50, dy: -30 }, { dx: 50, dy: -30 }, { dx: -50, dy: 30 }, { dx: 50, dy: 30 }],
+  params: { ratio: 1, resistance: 1, inductance: 0.5, coupling: 0.95 },
+  paramDefs: [
+    { key: 'ratio', label: 'Ratio' },
+    { key: 'resistance', label: 'R', unit: '\u03A9' },
+    { key: 'inductance', label: 'L', unit: 'H' },
+    { key: 'coupling', label: 'Coupling' }
+  ],
+  valueOf: function(c) { return '1:' + trimNum(c.params.ratio); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, -30); ctx.lineTo(-30, -30);
+    for (var i = 0; i < 4; i++) ctx.arc(-22.5 + i * 15, -30, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, -30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-50, 30); ctx.lineTo(-30, 30);
+    for (var j = 0; j < 4; j++) ctx.arc(-22.5 + j * 15, 30, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, 30);
+    ctx.stroke();
+    label(ctx, -42, c, def);
+  }
+});
+
+defType('bell', {
+  name: 'Bell', group: 'Machines', short: 'BEL',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 25, tempCoef: 0.004, thermalConductance: 0.2, heatCapacity: 5 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-20, 0);
+    ctx.moveTo(20, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-12, -12); ctx.lineTo(12, -12);
+    ctx.moveTo(-12, 12); ctx.lineTo(12, 12);
+    ctx.moveTo(-12, -12); ctx.lineTo(-12, 12);
+    ctx.moveTo(12, -12); ctx.lineTo(12, 12);
+    ctx.stroke();
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('fuse', {
+  name: 'Fuse', group: 'Machines', short: 'FU',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 0.1, ratedCurrent: 10, tempCoef: 0.004, thermalConductance: 0.5, heatCapacity: 1 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'ratedCurrent', label: 'Rated I', unit: 'A' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.ratedCurrent, 'A'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-15, 0);
+    ctx.moveTo(15, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-15, -18); ctx.lineTo(15, 18);
+    ctx.stroke();
+    label(ctx, 28, c, def);
+  }
+});
+
+defType('connector', {
+  name: 'Connector', group: 'Machines', short: 'CN',
+  terminals: [{ dx: -40, dy: 0 }, { dx: 40, dy: 0 }],
+  params: { resistance: 0.01 },
+  paramDefs: [{ key: 'resistance', label: 'Resistance', unit: '\u03A9' }],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-40, 0); ctx.lineTo(-14, 0);
+    ctx.moveTo(14, 0); ctx.lineTo(40, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+    ctx.stroke();
+    label(ctx, 26, c, def);
+  }
+});
+
+// ---------------- Power ----------------
+defType('vsource', {
+  name: 'DC Source', group: 'Power', short: 'V',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { voltage: 5 },
+  paramDefs: [{ key: 'voltage', label: 'Voltage', unit: 'V' }],
+  valueOf: function(c) { return formatSI(c.params.voltage, 'V'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-8, -14); ctx.lineTo(-8, 14);
+    ctx.moveTo(-13, 0); ctx.lineTo(-3, 0);
+    ctx.moveTo(8, -14); ctx.lineTo(8, 14);
+    ctx.stroke();
+    label(ctx, 36, c, def);
+  }
+});
+
+defType('acsource', {
+  name: 'AC Source', group: 'Power', short: 'AC',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { amplitude: 5, frequency: 50 },
+  paramDefs: [{ key: 'amplitude', label: 'Amplitude', unit: 'V' }, { key: 'frequency', label: 'Freq', unit: 'Hz' }],
+  valueOf: function(c) { return formatSI(c.params.amplitude, 'V') + ' ' + formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-12, 0);
+    ctx.quadraticCurveTo(-6, -14, 0, 0);
+    ctx.quadraticCurveTo(6, 14, 12, 0);
+    ctx.stroke();
+    label(ctx, 36, c, def);
+  }
+});
+
+defType('isource', {
+  name: 'Current Source', group: 'Power', short: 'I',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { current: 0.01 },
+  paramDefs: [{ key: 'current', label: 'Current', unit: 'A' }],
+  valueOf: function(c) { return formatSI(c.params.current, 'A'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 16); ctx.lineTo(0, -6);
+    ctx.lineTo(-6, 0); ctx.moveTo(0, -6); ctx.lineTo(6, 0);
+    ctx.stroke();
+    label(ctx, 36, c, def);
+  }
+});
+
+defType('battery', {
+  name: 'Battery', group: 'Power', short: 'BAT',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { voltage: 1.5, internalResistance: 0.1 },
+  paramDefs: [
+    { key: 'voltage', label: 'Voltage', unit: 'V' },
+    { key: 'internalResistance', label: 'Internal R', unit: '\u03A9' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.voltage, 'V'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-22, 0);
+    ctx.moveTo(22, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-22, -18); ctx.lineTo(-22, 18);
+    ctx.moveTo(-4, -18); ctx.lineTo(-4, 18);
+    ctx.moveTo(4, -18); ctx.lineTo(4, 18);
+    ctx.moveTo(22, -18); ctx.lineTo(22, 18);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-13, -6); ctx.lineTo(-13, 6);
+    ctx.moveTo(13, -6); ctx.lineTo(13, 6);
+    ctx.stroke();
+    label(ctx, 28, c, def);
+  }
+});
+
+defType('wavesource', {
+  name: 'Wave Source', group: 'Power', short: 'WV',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { amplitude: 5, frequency: 50, waveform: 'sine' },
+  paramDefs: [
+    { key: 'amplitude', label: 'Amplitude', unit: 'V' },
+    { key: 'frequency', label: 'Freq', unit: 'Hz' },
+    { key: 'waveform', label: 'Waveform', type: 'select', options: ['sine', 'square', 'triangle', 'sawtooth'] }
+  ],
+  valueOf: function(c) { return c.params.waveform + ' ' + formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-14, 0); ctx.lineTo(-8, 0); ctx.lineTo(-4, -12); ctx.lineTo(0, 12); ctx.lineTo(4, -12); ctx.lineTo(8, 0); ctx.lineTo(14, 0);
+    ctx.stroke();
+    label(ctx, 36, c, def);
+  }
+});
+
+// ---------------- Other (incl ground/switch) ----------------
+defType('ground', {
+  name: 'Ground', group: 'Other', short: 'GND',
+  terminals: [{ dx: 0, dy: 0 }],
+  params: {},
+  paramDefs: [],
+  valueOf: function() { return ''; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(0, -24); ctx.lineTo(0, 0);
+    ctx.moveTo(-18, 0); ctx.lineTo(18, 0);
+    ctx.moveTo(-11, 9); ctx.lineTo(11, 9);
+    ctx.moveTo(-4, 18); ctx.lineTo(4, 18);
+    ctx.stroke();
+  }
+});
+
+defType('switch', {
+  name: 'Switch', group: 'Other', short: 'SW',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { closed: false },
+  paramDefs: [{ key: 'closed', label: 'Closed', type: 'bool' }],
+  valueOf: function(c) { return c.params.closed ? 'ON' : 'OFF'; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-14, 0);
+    ctx.moveTo(14, 0); ctx.lineTo(50, 0);
+    if (c.params.closed) { ctx.moveTo(-14, 0); ctx.lineTo(14, 0); }
+    else { ctx.moveTo(-14, 0); ctx.lineTo(4, -24); }
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-14, 0, 3, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+  }
+});
+
+defType('hvswitch', {
+  name: 'HV Switch', group: 'Other', short: 'HVS',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { closed: false },
+  paramDefs: [{ key: 'closed', label: 'Closed', type: 'bool' }],
+  valueOf: function(c) { return c.params.closed ? 'ON' : 'OFF'; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-14, 0);
+    ctx.moveTo(14, 0); ctx.lineTo(50, 0);
+    if (c.params.closed) { ctx.moveTo(-14, 0); ctx.lineTo(14, 0); }
+    else { ctx.moveTo(-14, 0); ctx.lineTo(4, -26); }
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-14, 0, 3, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('breaker', {
+  name: 'Breaker', group: 'Other', short: 'BRK',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { closed: true, resistance: 0.05, ratedCurrent: 20 },
+  paramDefs: [
+    { key: 'closed', label: 'Closed', type: 'bool' },
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'ratedCurrent', label: 'Rated I', unit: 'A' }
+  ],
+  valueOf: function(c) { return c.params.closed ? 'ON' : 'OFF'; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-14, 0);
+    ctx.moveTo(14, 0); ctx.lineTo(50, 0);
+    if (c.params.closed) { ctx.moveTo(-14, 0); ctx.lineTo(14, 0); }
+    else { ctx.moveTo(-14, 0); ctx.lineTo(4, -24); }
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-14, 0, 3, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -28, 12, 12);
+    ctx.stroke();
+    label(ctx, 36, c, def);
+  }
+});
+
+// ---------------- Semiconductor ----------------
+defType('diode', {
+  name: 'Diode', group: 'Semiconductor', short: 'D',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { Is: 1e-14, n: 1 },
+  paramDefs: [],
+  valueOf: function() { return 'D'; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-15, 0);
+    ctx.moveTo(15, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-15, -18); ctx.lineTo(15, 0); ctx.lineTo(-15, 18);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(15, -18); ctx.lineTo(15, 18);
+    ctx.stroke();
+  }
+});
+
+defType('led', {
+  name: 'LED', group: 'Semiconductor', short: 'LED',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { Is: 1e-12, n: 2 },
+  paramDefs: [],
+  valueOf: function() { return 'LED'; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-15, 0);
+    ctx.moveTo(15, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-15, -18); ctx.lineTo(15, 0); ctx.lineTo(-15, 18);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(15, -18); ctx.lineTo(15, 18);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(20, -22); ctx.lineTo(30, -32);
+    ctx.moveTo(28, -22); ctx.lineTo(38, -32);
+    ctx.stroke();
+  }
+});
+
+defType('npn', {
+  name: 'NPN', group: 'Semiconductor', short: 'Q',
+  terminals: [{ dx: -40, dy: 0 }, { dx: 0, dy: -40 }, { dx: 0, dy: 40 }],
+  params: { beta: 100, Is: 1e-14 },
+  paramDefs: [{ key: 'beta', label: 'Beta' }],
+  valueOf: function(c) { return 'Beta=' + c.params.beta; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-40, 0); ctx.lineTo(-22, 0);
+    ctx.moveTo(-22, -22); ctx.lineTo(-22, 22);
+    ctx.moveTo(0, -40); ctx.lineTo(0, -22); ctx.lineTo(-22, -22);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-22, 22); ctx.lineTo(0, 22); ctx.lineTo(0, 40);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-22, 14); ctx.lineTo(-8, 22); ctx.lineTo(-22, 30);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+});
+
+defType('rectifier', {
+  name: 'Rectifier', group: 'Semiconductor', short: 'RECT',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { forwardDrop: 0.7, Is: 1e-9 },
+  paramDefs: [
+    { key: 'forwardDrop', label: 'Vf', unit: 'V' },
+    { key: 'Is', label: 'Is', unit: 'A' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.forwardDrop, 'V'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-15, 0);
+    ctx.moveTo(15, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-15, -18); ctx.lineTo(15, 0); ctx.lineTo(-15, 18);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(15, -18); ctx.lineTo(15, 18);
+    ctx.stroke();
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('solar_panel', {
+  name: 'Solar Panel', group: 'Semiconductor', short: 'PV',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { voltage: 12, current: 1, resistance: 1 },
+  paramDefs: [
+    { key: 'voltage', label: 'Voltage', unit: 'V' },
+    { key: 'current', label: 'Current', unit: 'A' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.voltage, 'V') + ' ' + formatSI(c.params.current, 'A'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-30, 0);
+    ctx.moveTo(30, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-30, -18); ctx.lineTo(30, -18); ctx.lineTo(30, 18); ctx.lineTo(-30, 18); ctx.closePath();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-30, 0); ctx.lineTo(30, 0);
+    ctx.moveTo(0, -18); ctx.lineTo(0, 18);
+    ctx.moveTo(-22, -6); ctx.lineTo(6, 6); ctx.moveTo(-6, -6); ctx.lineTo(22, 6);
+    ctx.stroke();
+    label(ctx, 28, c, def);
+  }
+});
+
+// ---------------- Three-Phase / Radio (simplified) ----------------
+defType('three_phase_source', {
+  name: '3-Phase Source', group: 'Three-Phase', short: '3P',
+  terminals: [{ dx: -60, dy: -40 }, { dx: 60, dy: -40 }, { dx: -60, dy: 0 }, { dx: 60, dy: 0 }, { dx: -60, dy: 40 }, { dx: 60, dy: 40 }],
+  params: { amplitude: 230, frequency: 50 },
+  paramDefs: [
+    { key: 'amplitude', label: 'Amplitude', unit: 'V' },
+    { key: 'frequency', label: 'Freq', unit: 'Hz' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.amplitude, 'V'); },
+  draw: function(ctx, c, def) {
+    for (var row = 0; row < 3; row++) {
+      var y = -40 + row * 40;
+      ctx.beginPath();
+      ctx.moveTo(-60, y); ctx.lineTo(-28, y);
+      ctx.arc(0, y, 28, 0, Math.PI * 2);
+      ctx.moveTo(28, y); ctx.lineTo(60, y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-8, y - 14); ctx.lineTo(-8, y + 14);
+      ctx.moveTo(-13, y); ctx.lineTo(-3, y);
+      ctx.moveTo(8, y - 14); ctx.lineTo(8, y + 14);
+      ctx.stroke();
+    }
+  }
+});
+
+defType('three_phase_motor', {
+  name: '3-Phase Motor', group: 'Three-Phase', short: '3PM',
+  terminals: [{ dx: -60, dy: -40 }, { dx: 60, dy: -40 }, { dx: -60, dy: 0 }, { dx: 60, dy: 0 }, { dx: -60, dy: 40 }, { dx: 60, dy: 40 }],
+  params: { resistance: 5, inductance: 0.05 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    for (var row = 0; row < 3; row++) {
+      var y = -40 + row * 40;
+      ctx.beginPath();
+      ctx.moveTo(-60, y); ctx.lineTo(-26, y);
+      ctx.moveTo(26, y); ctx.lineTo(60, y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, y, 26, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.font = 'bold 14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('M', 0, y + 1);
+    }
+  }
+});
+
+defType('three_phase_transformer', {
+  name: '3-Phase Transformer', group: 'Three-Phase', short: '3PT',
+  terminals: [{ dx: -60, dy: -40 }, { dx: 60, dy: -40 }, { dx: -60, dy: 0 }, { dx: 60, dy: 0 }, { dx: -60, dy: 40 }, { dx: 60, dy: 40 }, { dx: -60, dy: -60 }, { dx: 60, dy: -60 }],
+  params: { ratio: 1, resistance: 1, inductance: 0.5 },
+  paramDefs: [
+    { key: 'ratio', label: 'Ratio' },
+    { key: 'resistance', label: 'R', unit: '\u03A9' },
+    { key: 'inductance', label: 'L', unit: 'H' }
+  ],
+  valueOf: function(c) { return '1:' + trimNum(c.params.ratio); },
+  draw: function(ctx, c, def) {
+    for (var row = 0; row < 3; row++) {
+      var y = -40 + row * 40;
+      ctx.beginPath();
+      ctx.moveTo(-60, y); ctx.lineTo(-30, y);
+      for (var i = 0; i < 4; i++) ctx.arc(-22.5 + i * 15, y, 7.5, Math.PI, 0, false);
+      ctx.lineTo(60, y);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(-60, -60); ctx.lineTo(-30, -60);
+    for (var j = 0; j < 4; j++) ctx.arc(-22.5 + j * 15, -60, 7.5, Math.PI, 0, false);
+    ctx.lineTo(60, -60);
+    ctx.stroke();
+  }
+});
+
+defType('three_phase_rectifier', {
+  name: '3-Phase Rectifier', group: 'Three-Phase', short: '3PR',
+  terminals: [{ dx: -60, dy: -40 }, { dx: 60, dy: -40 }, { dx: -60, dy: 0 }, { dx: 60, dy: 0 }, { dx: -60, dy: 40 }, { dx: 60, dy: 40 }, { dx: 0, dy: 80 }, { dx: 0, dy: -80 }],
+  params: { forwardDrop: 0.7 },
+  paramDefs: [{ key: 'forwardDrop', label: 'Vf', unit: 'V' }],
+  valueOf: function(c) { return formatSI(c.params.forwardDrop, 'V'); },
+  draw: function(ctx, c, def) {
+    for (var row = 0; row < 3; row++) {
+      var y = -40 + row * 40;
+      ctx.beginPath();
+      ctx.moveTo(-60, y); ctx.lineTo(-20, y);
+      ctx.moveTo(20, y); ctx.lineTo(60, y);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-20, y - 14); ctx.lineTo(20, y); ctx.lineTo(-20, y + 14);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(20, y - 14); ctx.lineTo(20, y + 14);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(0, 80); ctx.lineTo(0, 44); ctx.lineTo(-20, 40);
+    ctx.moveTo(0, -80); ctx.lineTo(0, -44); ctx.lineTo(20, -40);
+    ctx.stroke();
+  }
+});
+
+defType('antenna', {
+  name: 'Antenna', group: 'Radio', short: 'ANT',
+  terminals: [{ dx: 0, dy: 0 }],
+  params: { resistance: 50 },
+  paramDefs: [{ key: 'resistance', label: 'Resistance', unit: '\u03A9' }],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(0, -40); ctx.lineTo(0, 0);
+    ctx.moveTo(0, -40); ctx.lineTo(12, -30);
+    ctx.moveTo(0, -30); ctx.lineTo(12, -20);
+    ctx.moveTo(0, -20); ctx.lineTo(12, -10);
+    ctx.stroke();
+  }
+});
+
+defType('oscillator', {
+  name: 'Oscillator', group: 'Radio', short: 'OSC',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { frequency: 1000, amplitude: 1 },
+  paramDefs: [
+    { key: 'frequency', label: 'Freq', unit: 'Hz' },
+    { key: 'amplitude', label: 'Amplitude', unit: 'V' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-16, 0); ctx.lineTo(-10, 0); ctx.lineTo(-5, -12); ctx.lineTo(0, 12); ctx.lineTo(5, -12); ctx.lineTo(10, 0); ctx.lineTo(16, 0);
+    ctx.stroke();
+    label(ctx, 36, c, def);
+  }
+});
+
+defType('speaker', {
+  name: 'Speaker', group: 'Radio', short: 'SPK',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 8, inductance: 0.001 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'inductance', label: 'Inductance', unit: 'H' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-12, -12); ctx.lineTo(12, -12);
+    ctx.moveTo(-12, 12); ctx.lineTo(12, 12);
+    ctx.moveTo(-12, -12); ctx.lineTo(-12, 12);
+    ctx.moveTo(12, -12); ctx.lineTo(12, 12);
+    ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('radio_transmitter', {
+  name: 'Radio TX', group: 'Radio', short: 'TX',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { frequency: 100e6, power: 1 },
+  paramDefs: [
+    { key: 'frequency', label: 'Freq', unit: 'Hz' },
+    { key: 'power', label: 'Power', unit: 'W' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -24, 48, 48);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-8, 10); ctx.lineTo(8, 10); ctx.lineTo(8, -10); ctx.lineTo(-8, -10);
+    ctx.closePath(); ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('radio_receiver', {
+  name: 'Radio RX', group: 'Radio', short: 'RX',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { frequency: 100e6 },
+  paramDefs: [{ key: 'frequency', label: 'Freq', unit: 'Hz' }],
+  valueOf: function(c) { return formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -24, 48, 48);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-12, -14); ctx.lineTo(12, -14);
+    ctx.moveTo(-12, 0); ctx.lineTo(12, 0);
+    ctx.moveTo(-12, 14); ctx.lineTo(12, 14);
+    ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+// ---------------- Controlled sources (simplified) ----------------
+defType('vccs', {
+  name: 'VCCS', group: 'Power', short: 'G',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { transconductance: 0.01 },
+  paramDefs: [{ key: 'transconductance', label: 'Gm', unit: 'S' }],
+  valueOf: function(c) { return formatSI(c.params.transconductance, 'S'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 16); ctx.lineTo(0, -6);
+    ctx.lineTo(-6, 0); ctx.moveTo(0, -6); ctx.lineTo(6, 0);
+    ctx.stroke();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('G', 0, -18);
+    label(ctx, 36, c, def);
+  }
+});
+
+defType('vcvs', {
+  name: 'VCVS', group: 'Power', short: 'E',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { gain: 10 },
+  paramDefs: [{ key: 'gain', label: 'Gain' }],
+  valueOf: function(c) { return 'x' + trimNum(c.params.gain); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-25, 0);
+    ctx.arc(0, 0, 25, 0, Math.PI * 2);
+    ctx.moveTo(25, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-8, -14); ctx.lineTo(-8, 14);
+    ctx.moveTo(-13, 0); ctx.lineTo(-3, 0);
+    ctx.moveTo(8, -14); ctx.lineTo(8, 14);
+    ctx.stroke();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('E', 0, -18);
+    label(ctx, 36, c, def);
+  }
+});
+
+defType('mutual_inductor', {
+  name: 'Mutual Inductor', group: 'Passive', short: 'MUT',
+  terminals: [{ dx: -50, dy: -30 }, { dx: 50, dy: -30 }, { dx: -50, dy: 30 }, { dx: 50, dy: 30 }],
+  params: { inductance: 0.1, coupling: 0.9, resistance: 0.1 },
+  paramDefs: [
+    { key: 'inductance', label: 'L', unit: 'H' },
+    { key: 'coupling', label: 'Coupling' },
+    { key: 'resistance', label: 'R', unit: '\u03A9' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, -30); ctx.lineTo(-30, -30);
+    for (var i = 0; i < 4; i++) ctx.arc(-22.5 + i * 15, -30, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, -30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-50, 30); ctx.lineTo(-30, 30);
+    for (var j = 0; j < 4; j++) ctx.arc(-22.5 + j * 15, 30, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, 30);
+    ctx.stroke();
+    label(ctx, -42, c, def);
+  }
+});
+
+defType('gauge', {
+  name: 'Gauge', group: 'Machines', short: 'GA',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 10, tempCoef: 0.004, thermalConductance: 0.1, heatCapacity: 1 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 0); ctx.lineTo(0, -16);
+    ctx.stroke();
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('grounding_rod', {
+  name: 'Grounding Rod', group: 'Other', short: 'ROD',
+  terminals: [{ dx: 0, dy: 0 }],
+  params: { resistance: 5 },
+  paramDefs: [{ key: 'resistance', label: 'Resistance', unit: '\u03A9' }],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(0, -24); ctx.lineTo(0, 0);
+    ctx.moveTo(-18, 0); ctx.lineTo(18, 0);
+    ctx.moveTo(-11, 9); ctx.lineTo(11, 9);
+    ctx.moveTo(-4, 18); ctx.lineTo(4, 18);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 18); ctx.lineTo(0, 30);
+    ctx.stroke();
+    label(ctx, 38, c, def);
+  }
+});
+
+defType('rheostat', {
+  name: 'Rheostat', group: 'Passive', short: 'RH',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 100, wiper: 0.5 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'wiper', label: 'Wiper' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-32, 0);
+    ctx.lineTo(-22, -12); ctx.lineTo(-7, 12); ctx.lineTo(7, -12); ctx.lineTo(22, 12); ctx.lineTo(32, 0);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(22, 12); ctx.lineTo(14, -22);
+    ctx.stroke();
+    label(ctx, 32, c, def);
+  }
+});
+
+defType('carbon_pile', {
+  name: 'Carbon Pile', group: 'Passive', short: 'CP',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 10 },
+  paramDefs: [{ key: 'resistance', label: 'Resistance', unit: '\u03A9' }],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-20, 0);
+    ctx.moveTo(20, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-20, -12); ctx.lineTo(-8, 12);
+    ctx.moveTo(-8, -12); ctx.lineTo(4, 12);
+    ctx.moveTo(4, -12); ctx.lineTo(16, 12);
+    ctx.moveTo(16, -12); ctx.lineTo(20, 0);
+    ctx.stroke();
+    label(ctx, 24, c, def);
+  }
+});
+
+defType('variac', {
+  name: 'Variac', group: 'Machines', short: 'VAR',
+  terminals: [{ dx: -50, dy: -30 }, { dx: 50, dy: -30 }, { dx: -50, dy: 30 }, { dx: 50, dy: 30 }],
+  params: { ratio: 0.5, resistance: 1, inductance: 0.3 },
+  paramDefs: [
+    { key: 'ratio', label: 'Ratio' },
+    { key: 'resistance', label: 'R', unit: '\u03A9' },
+    { key: 'inductance', label: 'L', unit: 'H' }
+  ],
+  valueOf: function(c) { return '1:' + trimNum(c.params.ratio); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, -30); ctx.lineTo(-30, -30);
+    for (var i = 0; i < 4; i++) ctx.arc(-22.5 + i * 15, -30, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, -30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-50, 30); ctx.lineTo(-30, 30);
+    for (var j = 0; j < 4; j++) ctx.arc(-22.5 + j * 15, 30, 7.5, Math.PI, 0, false);
+    ctx.lineTo(50, 30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, 30); ctx.lineTo(0, 0);
+    ctx.stroke();
+    label(ctx, -42, c, def);
+  }
+});
+
+defType('plotter', {
+  name: 'Plotter', group: 'Machines', short: 'PLT',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 100 },
+  paramDefs: [{ key: 'resistance', label: 'Resistance', unit: '\u03A9' }],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -20, 48, 40);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-16, 10); ctx.lineTo(16, -10);
+    ctx.stroke();
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('contactor', {
+  name: 'Contactor', group: 'Other', short: 'CONT',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }, { dx: -30, dy: -40 }, { dx: 30, dy: -40 }],
+  params: { closed: true, resistance: 0.05 },
+  paramDefs: [
+    { key: 'closed', label: 'Closed', type: 'bool' },
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' }
+  ],
+  valueOf: function(c) { return c.params.closed ? 'ON' : 'OFF'; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-14, 0);
+    ctx.moveTo(14, 0); ctx.lineTo(50, 0);
+    if (c.params.closed) { ctx.moveTo(-14, 0); ctx.lineTo(14, 0); }
+    else { ctx.moveTo(-14, 0); ctx.lineTo(4, -24); }
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-14, 0, 3, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // 线圈
+    ctx.beginPath();
+    ctx.moveTo(-30, -40); ctx.lineTo(-30, -28);
+    ctx.arc(-15, -34, 15, 0, Math.PI * 2, true);
+    ctx.moveTo(0, -40); ctx.lineTo(0, -28);
+    ctx.stroke();
+    label(ctx, -48, c, def);
+  }
+});
+
+defType('dc_motor', {
+  name: 'DC Motor', group: 'Machines', short: 'DCM',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 3, inductance: 0.02, backEMF: 0.01, tempCoef: 0.0039, thermalConductance: 1.0, heatCapacity: 40 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'backEMF', label: 'Back EMF', unit: 'V/rpm' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -12); ctx.lineTo(0, 12);
+    ctx.moveTo(0, 0); ctx.lineTo(10, 0);
+    ctx.stroke();
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('basin_heater', {
+  name: 'Basin Heater', group: 'Machines', short: 'BH',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 20, tempCoef: 0.0004, thermalConductance: 1.5, heatCapacity: 200 },
+  paramDefs: [
+    { key: 'resistance', label: 'Resistance', unit: '\u03A9' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' },
+    { key: 'thermalConductance', label: 'Thermal', unit: 'W/K' },
+    { key: 'heatCapacity', label: 'HeatCap', unit: 'J/K' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-32, 0);
+    ctx.lineTo(-22, -12); ctx.lineTo(-7, 12); ctx.lineTo(7, -12); ctx.lineTo(22, 12); ctx.lineTo(32, 0);
+    ctx.lineTo(50, 0);
+    ctx.stroke();
+    // 水盆
+    ctx.beginPath();
+    ctx.moveTo(-30, 20); ctx.lineTo(30, 20);
+    ctx.moveTo(-30, 20); ctx.quadraticCurveTo(-30, 32, -18, 32);
+    ctx.lineTo(18, 32); ctx.quadraticCurveTo(30, 32, 30, 20);
+    ctx.stroke();
+    label(ctx, 42, c, def);
+  }
+});
+
+defType('dc_dc', {
+  name: 'DC-DC', group: 'Semiconductor', short: 'DCDC',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { efficiency: 0.9, outputVoltage: 5 },
+  paramDefs: [
+    { key: 'outputVoltage', label: 'Output', unit: 'V' },
+    { key: 'efficiency', label: 'Efficiency' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.outputVoltage, 'V'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -20, 48, 40);
+    ctx.stroke();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('DC', 0, 0);
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('inverter', {
+  name: 'Inverter', group: 'Semiconductor', short: 'INV',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { frequency: 50, amplitude: 230 },
+  paramDefs: [
+    { key: 'frequency', label: 'Freq', unit: 'Hz' },
+    { key: 'amplitude', label: 'Amplitude', unit: 'V' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -20, 48, 40);
+    ctx.stroke();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('INV', 0, 0);
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('vfd', {
+  name: 'VFD', group: 'Semiconductor', short: 'VFD',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { frequency: 50, voltage: 230 },
+  paramDefs: [
+    { key: 'frequency', label: 'Freq', unit: 'Hz' },
+    { key: 'voltage', label: 'Voltage', unit: 'V' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.frequency, 'Hz'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.rect(-24, -20, 48, 40);
+    ctx.stroke();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('VFD', 0, 0);
+    label(ctx, 30, c, def);
+  }
+});
+
+defType('brushless_motor', {
+  name: 'Brushless Motor', group: 'Machines', short: 'BLM',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 2, inductance: 0.01, tempCoef: 0.0039, thermalConductance: 1.0, heatCapacity: 30 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-8, -8); ctx.lineTo(8, 8);
+    ctx.moveTo(8, -8); ctx.lineTo(-8, 8);
+    ctx.stroke();
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('induction_motor', {
+  name: 'Induction Motor', group: 'Machines', short: 'IM',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 4, inductance: 0.03, tempCoef: 0.0039, thermalConductance: 1.0, heatCapacity: 40 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -14); ctx.lineTo(0, 14);
+    ctx.stroke();
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('synchronous_motor', {
+  name: 'Synchronous Motor', group: 'Machines', short: 'SM',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 3, inductance: 0.02, tempCoef: 0.0039, thermalConductance: 1.0, heatCapacity: 40 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'tempCoef', label: 'TempCoef', unit: '/C' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('electromachine', {
+  name: 'Electromachine', group: 'Machines', short: 'EMC',
+  terminals: [{ dx: -50, dy: 0 }, { dx: 50, dy: 0 }],
+  params: { resistance: 5, inductance: 0.05, voltage: 10, tempCoef: 0.0039, thermalConductance: 1.0, heatCapacity: 50 },
+  paramDefs: [
+    { key: 'resistance', label: 'Winding R', unit: '\u03A9' },
+    { key: 'inductance', label: 'Winding L', unit: 'H' },
+    { key: 'voltage', label: 'Voltage', unit: 'V' }
+  ],
+  valueOf: function(c) { return formatSI(c.params.resistance, '\u03A9') + ' + ' + formatSI(c.params.inductance, 'H'); },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-50, 0); ctx.lineTo(-24, 0);
+    ctx.moveTo(24, 0); ctx.lineTo(50, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('E', 0, 1);
+    label(ctx, 34, c, def);
+  }
+});
+
+defType('electron_tube', {
+  name: 'Electron Tube', group: 'Semiconductor', short: 'TUBE',
+  terminals: [{ dx: -40, dy: -30 }, { dx: 40, dy: -30 }, { dx: -40, dy: 30 }, { dx: 40, dy: 30 }],
+  params: { mu: 20, rp: 5000 },
+  paramDefs: [
+    { key: 'mu', label: 'Mu' },
+    { key: 'rp', label: 'Rp', unit: '\u03A9' }
+  ],
+  valueOf: function(c) { return 'Mu=' + c.params.mu; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.arc(0, 0, 36, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-40, -30); ctx.lineTo(-26, -30);
+    ctx.moveTo(40, -30); ctx.lineTo(26, -30);
+    ctx.moveTo(-40, 30); ctx.lineTo(-26, 30);
+    ctx.moveTo(40, 30); ctx.lineTo(26, 30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -36); ctx.lineTo(0, 36);
+    ctx.moveTo(-20, -20); ctx.lineTo(20, -20);
+    ctx.moveTo(-14, 20); ctx.lineTo(14, 20);
+    ctx.stroke();
+    label(ctx, 46, c, def);
+  }
+});
+
+defType('vfet', {
+  name: 'VFET', group: 'Semiconductor', short: 'VFET',
+  terminals: [{ dx: -40, dy: -30 }, { dx: 40, dy: -30 }, { dx: 0, dy: 40 }],
+  params: { beta: 0.01, Vth: 2 },
+  paramDefs: [
+    { key: 'beta', label: 'Beta' },
+    { key: 'Vth', label: 'Vth', unit: 'V' }
+  ],
+  valueOf: function(c) { return 'Vth=' + c.params.Vth; },
+  draw: function(ctx, c, def) {
+    ctx.beginPath();
+    ctx.moveTo(-40, -30); ctx.lineTo(-20, -30);
+    ctx.moveTo(40, -30); ctx.lineTo(20, -30);
+    ctx.moveTo(0, 40); ctx.lineTo(0, -10);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-20, -14); ctx.lineTo(20, -14);
+    ctx.moveTo(-20, 14); ctx.lineTo(20, 14);
+    ctx.moveTo(-20, -14); ctx.lineTo(-20, 14);
+    ctx.moveTo(20, -14); ctx.lineTo(20, 14);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -14); ctx.lineTo(0, 14);
+    ctx.stroke();
+    label(ctx, 48, c, def);
+  }
+});
+
+// ================= Netlist (node merging, for status + sim) =================
+function DynUF() {
+  this.p = [];
+  this.r = [];
+}
+DynUF.prototype.add = function() { this.p.push(this.p.length); this.r.push(0); return this.p.length - 1; };
+DynUF.prototype.find = function(x) { while (this.p[x] !== x) { this.p[x] = this.p[this.p[x]]; x = this.p[x]; } return x; };
+DynUF.prototype.union = function(a, b) {
+  a = this.find(a); b = this.find(b);
+  if (a === b) return;
+  if (this.r[a] < this.r[b]) { var t = a; a = b; b = t; }
+  this.p[b] = a;
+  if (this.r[a] === this.r[b]) this.r[a]++;
+};
+
+function Netlist(components, wires, resistive) {
+  this.components = components;
+  this.wires = wires;
+  this.resistive = (resistive !== false);
+  this.numNodes = 0;
+  this.groundNode = 0;
+  this._posMap = {};
+  this._nodeByPoint = [];
+  this.compNodes = {};
+  this.wireSegments = [];
+  this._genPt = {};
+  this.build();
+}
+
+Netlist.prototype.build = function() {
+  var uf = new DynUF();
+  this._posMap = {};
+  var compPts = {};
+  var that = this;
+  function addPoint(x, y) {
+    var key = Math.round(x) + ',' + Math.round(y);
+    var pt = uf.add();
+    if (that._posMap[key] !== undefined) uf.union(pt, that._posMap[key]);
+    else that._posMap[key] = pt;
+    return pt;
+  }
+  function addWirePoint(x, y) { return addPoint(Math.round(x), Math.round(y)); }
+
+  for (var i = 0; i < this.components.length; i++) {
+    var c = this.components[i];
+    var def = COMPONENT_DEFS[c.type];
+    var pts = [];
+    for (var k = 0; k < def.terminals.length; k++) {
+      var t = absTerminal(c, k);
+      pts.push(addPoint(t.x, t.y));
+    }
+    compPts[c.id] = pts;
+  }
+  for (var i2 = 0; i2 < this.components.length; i2++) {
+    var c2 = this.components[i2];
+    var genLike = c2.type === 'generator' || c2.type === 'battery' || c2.type === 'solar_panel'
+      || c2.type === 'synchronous_motor' || (c2.type === 'electromachine' && c2.params.mode === 'generator');
+    if (genLike) {
+      var kx = -(1e9 + c2.id);
+      this._genPt[c2.id] = addPoint(kx, kx);
+    }
+  }
+  var gfirst = null;
+  for (var i3 = 0; i3 < this.components.length; i3++) {
+    var c3 = this.components[i3];
+    if (c3.type === 'ground') {
+      var pt = compPts[c3.id][0];
+      if (gfirst === null) gfirst = pt; else uf.union(gfirst, pt);
+    }
+  }
+  this.wireSegments = [];
+  if (this.resistive) {
+    for (var w = 0; w < this.wires.length; w++) {
+      var wire = this.wires[w];
+      var pts = [];
+      for (var q = 0; q < wire.points.length; q++) pts.push(addWirePoint(wire.points[q].x, wire.points[q].y));
+      for (var s = 0; s < pts.length - 1; s++) {
+        var a = wire.points[s], b = wire.points[s + 1];
+        this.wireSegments.push({ wire: wire, pt1: pts[s], pt2: pts[s + 1], n1: -1, n2: -1, length: Math.hypot(b.x - a.x, b.y - a.y) });
+      }
+    }
+  } else {
+    for (var w2 = 0; w2 < this.wires.length; w2++) {
+      var wire2 = this.wires[w2];
+      var prev = null;
+      for (var q2 = 0; q2 < wire2.points.length; q2++) {
+        var pt2 = addWirePoint(wire2.points[q2].x, wire2.points[q2].y);
+        if (prev !== null) uf.union(prev, pt2);
+        prev = pt2;
+      }
+    }
+  }
+
+  var rootIdx = {};
+  var count = 0;
+  function nodeOf(pt) {
+    var r = uf.find(pt);
+    if (rootIdx[r] === undefined) rootIdx[r] = count++;
+    return rootIdx[r];
+  }
+  var ground = null;
+  if (gfirst !== null) ground = nodeOf(gfirst);
+  function remap(idx) {
+    if (ground === null) return idx;
+    if (idx === ground) return 0;
+    return idx < ground ? idx + 1 : idx;
+  }
+  this._nodeByPoint = new Array(uf.p.length);
+  for (var pt3 = 0; pt3 < uf.p.length; pt3++) this._nodeByPoint[pt3] = remap(nodeOf(pt3));
+  this.numNodes = count;
+  this.groundNode = 0;
+  for (var sg = 0; sg < this.wireSegments.length; sg++) {
+    this.wireSegments[sg].n1 = this._nodeByPoint[this.wireSegments[sg].pt1];
+    this.wireSegments[sg].n2 = this._nodeByPoint[this.wireSegments[sg].pt2];
+  }
+  this.compNodes = {};
+  for (var i4 = 0; i4 < this.components.length; i4++) {
+    var c4 = this.components[i4];
+    var p = compPts[c4.id];
+    var nodes = p.map(function(pt) { return that._nodeByPoint[pt]; });
+    if (this._genPt[c4.id] !== undefined) {
+      nodes = [nodes[0], this._nodeByPoint[this._genPt[c4.id]], nodes[1]];
+    }
+    this.compNodes[c4.id] = nodes;
+    c4._nodeIdx = nodes;
+  }
+};
+
+Netlist.prototype.nodeForPoint = function(x, y) {
+  var pt = this._posMap[x + ',' + y];
+  if (pt === undefined) return 0;
+  return this._nodeByPoint[pt];
+};
+
+// ================= Editor =================
+function segDist(a, b, p) {
+  var dx = b.x - a.x, dy = b.y - a.y;
+  var len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  var t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function Editor(canvas) {
+  this.canvas = canvas;
+  this.ctx = canvas.getContext('2d');
+  this.components = [];
+  this.wires = [];
+  this.probes = [];
+  this.mode = 'select';
+  this.rotation = 0;
+  this.selected = null;
+  this.multi = [];
+  this.marquee = null;
+  this.gridSnap = true;
+  this.ortho = true;
+  this.wireColor = '#4fc3f7';
+  this.wireWidth = 2;
+  this.wireType = 'copper';
+  this.wireResistive = true;
+  this.zoom = 1;
+  this.offset = { x: 60, y: 60 };
+  this.hover = null;
+  this.drag = null;
+  this.panning = null;
+  this.wireDraft = null;
+  this.draftPos = null;
+  this.simResults = null;
+  this.nextId = 1;
+  this.undoStack = [];
+  this.redoStack = [];
+  this.netlist = null;
+  this._callbacks = {};
+  this._ctxmenu = document.getElementById('ctxmenu');
+  this._bind();
+}
+Editor.prototype.on = function(name, fn) { this._callbacks[name] = fn; };
+Editor.prototype.emit = function(name) {
+  var fn = this._callbacks[name];
+  if (fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    fn.apply(null, args);
+  }
+};
+Editor.prototype._id = function() { return this.nextId++; };
+
+Editor.prototype.rect = function() {
+  try {
+    var r = this.canvas.getBoundingClientRect();
+    if (r && r.left !== undefined && r.top !== undefined && isFinite(r.left)) return r;
+  } catch (e) {}
+  return { left: 0, top: 0, width: this.canvas.getWidth ? this.canvas.getWidth() : 800, height: this.canvas.getHeight ? this.canvas.getHeight() : 600 };
+};
+Editor.prototype.getPos = function(e) {
+  // AUI: 优先用相对坐标 offsetX/offsetY（相对事件目标），否则 clientX - rect
+  if (e.offsetX !== undefined && e.offsetY !== undefined && isFinite(e.offsetX)) {
+    return { x: e.offsetX, y: e.offsetY };
+  }
+  var r = this.rect();
+  var cx = (e.clientX !== undefined) ? e.clientX : (e.x !== undefined ? e.x : 0);
+  var cy = (e.clientY !== undefined) ? e.clientY : (e.y !== undefined ? e.y : 0);
+  return { x: cx - r.left, y: cy - r.top };
+};
+Editor.prototype.toWorld = function(sx, sy) { return { x: (sx - this.offset.x) / this.zoom, y: (sy - this.offset.y) / this.zoom }; };
+Editor.prototype.toScreen = function(wx, wy) { return { x: wx * this.zoom + this.offset.x, y: wy * this.zoom + this.offset.y }; };
+Editor.prototype.snap = function(v) { return this.gridSnap ? Math.round(v / GRID) * GRID : v; };
+Editor.prototype.snapPoint = function(p) { return { x: this.snap(p.x), y: this.snap(p.y) }; };
+
+Editor.prototype.resize = function() {
+  var parent = this.canvas.parentElement;
+  var w = (parent && (parent.clientWidth || (parent.getWidth ? parent.getWidth() : 0))) || 800;
+  var h = (parent && (parent.clientHeight || (parent.getHeight ? parent.getHeight() : 0))) || 600;
+  var dpr = 1;
+  try { if (window && window.devicePixelRatio) dpr = window.devicePixelRatio; } catch (e) {}
+  this.canvas.setAttribute('width', Math.round(w * dpr));
+  this.canvas.setAttribute('height', Math.round(h * dpr));
+  this.canvas.style.width = w + 'px';
+  this.canvas.style.height = h + 'px';
+  this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  this.render();
+};
+
+Editor.prototype._bind = function() {
+  var self = this;
+  var cv = this.canvas;
+  cv.addEventListener('mousedown', function(e) { self.onDown(e); });
+  // AUI 无 window 全局事件：全部绑到 document（Document 支持 addEventListener）
+  var docRoot = (typeof document !== 'undefined') ? document : null;
+  if (docRoot && docRoot.addEventListener) {
+    docRoot.addEventListener('mousemove', function(e) { self.onMove(e); });
+    docRoot.addEventListener('mouseup', function(e) { self.onUp(e); });
+    docRoot.addEventListener('keydown', function(e) { self.onKey(e); });
+    docRoot.addEventListener('click', function() { self.hideCtxMenu(); });
+  }
+  if (cv.addEventListener) {
+    cv.addEventListener('wheel', function(e) { self.onWheel(e); });
+    cv.addEventListener('contextmenu', function(e) { self.onCtx(e); });
+    cv.addEventListener('mousemove', function(e) { self.onMove(e); });
+    cv.addEventListener('mouseup', function(e) { self.onUp(e); });
+  }
+  var hc = document.getElementById('help-close');
+  if (hc && hc.addEventListener) hc.addEventListener('click', function() {
+    document.getElementById('modal-help').classList.add('hidden');
+  });
+  this.resize();
+};
+
+Editor.prototype.onDown = function(e) {
+  if (e.button === 1) {
+    if (e.preventDefault) e.preventDefault();
+    this.panning = { sx: e.clientX, sy: e.clientY, ox: this.offset.x, oy: this.offset.y };
+    return;
+  }
+  if (e.button !== 0) return;
+  var ctrl = (e.controlKey !== undefined) ? e.controlKey : (e.ctrlKey || false);
+  var p = this.getPos(e);
+  if (this.mode === 'wire') { this.wireClick(p); return; }
+  if (this.mode === 'probe') { this.probeClick(p); return; }
+  if (this.mode !== 'select') { this.placeComponent(p); return; }
+  var hit = this.hitTest(p);
+  var w = this.toWorld(p.x, p.y);
+  if (hit && ctrl) {
+    var idx = -1;
+    for (var i = 0; i < this.multi.length; i++) if (this.multi[i].obj === hit.obj) { idx = i; break; }
+    if (idx >= 0) this.multi.splice(idx, 1); else this.multi.push({ type: hit.type, obj: hit.obj });
+    this.selected = this.multi.length ? this.multi[this.multi.length - 1] : null;
+    this.emit('select'); this.emit('change'); this.render();
+    return;
+  }
+  var inMulti = false;
+  if (this.multi.length > 1) {
+    for (var j = 0; j < this.multi.length; j++) if (this.multi[j].obj === hit.obj) { inMulti = true; break; }
+  }
+  if (hit && inMulti) {
+    this.selected = { type: hit.type, obj: hit.obj };
+    this.emit('select');
+  } else {
+    this.select(hit);
+  }
+  if (hit) {
+    var group;
+    if (this.multi.length > 1 && inMulti) {
+      group = [];
+      for (var g = 0; g < this.multi.length; g++) if (this.multi[g].type === 'comp') group.push(this.multi[g].obj);
+    } else {
+      group = [hit.obj];
+    }
+    var first = group[0] || hit.obj;
+    this.drag = { kind: hit.type, obj: hit.obj, gx: w.x - first.x, gy: w.y - first.y, moved: false, sx: e.clientX, sy: e.clientY, comps: group, attach: {} };
+    if (hit.type === 'comp') {
+      for (var ci = 0; ci < group.length; ci++) {
+        var c = group[ci];
+        var def = COMPONENT_DEFS[c.type];
+        var att = [];
+        for (var ti = 0; ti < def.terminals.length; ti++) {
+          var t = absTerminal(c, ti);
+          for (var wi = 0; wi < this.wires.length; wi++) {
+            var wire = this.wires[wi];
+            for (var pj = 0; pj < wire.points.length; pj++) {
+              if (wire.points[pj].x === t.x && wire.points[pj].y === t.y) att.push({ w: wire, j: pj, ti: ti });
+            }
+          }
+        }
+        this.drag.attach[c.id] = att;
+      }
+    }
+  } else {
+    this.marquee = { x0: w.x, y0: w.y, x1: w.x, y1: w.y };
+    this.multi = [];
+  }
+  this.render();
+};
+
+Editor.prototype.onMove = function(e) {
+  var p = this.getPos(e);
+  if (this.panning) {
+    this.offset = { x: this.panning.ox + (e.clientX - this.panning.sx), y: this.panning.oy + (e.clientY - this.panning.sy) };
+    this.render();
+    return;
+  }
+  if (this.marquee) {
+    var w = this.toWorld(p.x, p.y);
+    this.marquee.x1 = w.x; this.marquee.y1 = w.y;
+    this.render();
+    return;
+  }
+  if (this.drag) {
+    var w2 = this.toWorld(p.x, p.y);
+    var o = this.drag;
+    if (!o.moved && Math.hypot(e.clientX - o.sx, e.clientY - o.sy) > 3) {
+      o.moved = true;
+      this.recordUndo();
+    }
+    if (o.moved) {
+      if (o.kind === 'comp') {
+        for (var ci = 0; ci < o.comps.length; ci++) {
+          var c = o.comps[ci];
+          c.x = this.snap(w2.x - o.gx);
+          c.y = this.snap(w2.y - o.gy);
+        }
+        for (var ci2 = 0; ci2 < o.comps.length; ci2++) {
+          var c2 = o.comps[ci2];
+          var att = o.attach[c2.id];
+          if (!att) continue;
+          for (var ai = 0; ai < att.length; ai++) {
+            var a = att[ai];
+            var nt = absTerminal(c2, a.ti);
+            a.w.points[a.j].x = nt.x; a.w.points[a.j].y = nt.y;
+          }
+        }
+      } else {
+        this._wireDx = Math.round((w2.x - o.gx) / GRID) * GRID;
+        this._wireDy = Math.round((w2.y - o.gy) / GRID) * GRID;
+      }
+      this.rebuildNetlist();
+      this.emit('change');
+      this.render();
+    }
+    return;
+  }
+  if (this.mode === 'wire' && this.wireDraft) {
+    this.draftPos = this.toWorld(p.x, p.y);
+    this.render();
+    return;
+  }
+  this.hover = this.mode === 'select' ? this.hitTest(p) : null;
+  if (this.mode !== 'select') this.draftPos = this.toWorld(p.x, p.y);
+  this.render();
+};
+
+Editor.prototype.onUp = function(e) {
+  if (this.panning) { this.panning = null; return; }
+  if (this.marquee) {
+    var m = this.marquee;
+    this.marquee = null;
+    var x0 = Math.min(m.x0, m.x1), x1 = Math.max(m.x0, m.x1);
+    var y0 = Math.min(m.y0, m.y1), y1 = Math.max(m.y0, m.y1);
+    var sel = [];
+    for (var ci = 0; ci < this.components.length; ci++) {
+      var c = this.components[ci];
+      var def = COMPONENT_DEFS[c.type];
+      for (var i = 0; i < def.terminals.length; i++) {
+        var t = absTerminal(c, i);
+        if (t.x >= x0 && t.x <= x1 && t.y >= y0 && t.y <= y1) { sel.push({ type: 'comp', obj: c }); break; }
+      }
+    }
+    for (var wi = 0; wi < this.wires.length; wi++) {
+      var wire = this.wires[wi];
+      for (var q = 0; q < wire.points.length; q++) {
+        var pt = wire.points[q];
+        if (pt.x >= x0 && pt.x <= x1 && pt.y >= y0 && pt.y <= y1) { sel.push({ type: 'wire', obj: wire }); break; }
+      }
+    }
+    this.multi = sel;
+    this.selected = sel.length ? sel[sel.length - 1] : null;
+    this.emit('select'); this.emit('change'); this.render();
+    return;
+  }
+  if (this.drag) {
+    if (this.drag.kind === 'wire' && this._wireDx) {
+      var dx = this._wireDx, dy = this._wireDy;
+      this._wireDx = 0; this._wireDy = 0;
+      var pts = this.drag.obj.points;
+      for (var qi = 0; qi < pts.length; qi++) { pts[qi].x += dx; pts[qi].y += dy; }
+      this.rebuildNetlist();
+      this.render();
+    }
+    this.drag = null;
+  }
+};
+
+Editor.prototype.onWheel = function(e) {
+  if (e.preventDefault) e.preventDefault();
+  var p = this.getPos(e);
+  var w = this.toWorld(p.x, p.y);
+  var dy = (e.deltaY !== undefined) ? e.deltaY : (e.wheelDelta !== undefined ? -e.wheelDelta : 0);
+  var f = dy < 0 ? 1.1 : 0.9;
+  this.zoom = clamp(this.zoom * f, 0.15, 10);
+  this.offset.x = p.x - w.x * this.zoom;
+  this.offset.y = p.y - w.y * this.zoom;
+  this.render();
+};
+
+Editor.prototype.onKey = function(e) {
+  var t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+  var k = String(e.key || '').toLowerCase();
+  var ctrl = (e.controlKey !== undefined) ? e.controlKey : ((e.ctrlKey || e.metaKey) || false);
+  if (ctrl) {
+    if (k === 'z') { if (e.preventDefault) e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); }
+    else if (k === 'y') { if (e.preventDefault) e.preventDefault(); this.redo(); }
+    else if (k === 's') { if (e.preventDefault) e.preventDefault(); this.emit('save'); }
+    else if (k === 'o') { if (e.preventDefault) e.preventDefault(); this.emit('open'); }
+    else if (k === 'd') { if (e.preventDefault) e.preventDefault(); this.duplicate(); }
+    return;
+  }
+  if (k === 'delete' || k === 'backspace') this.deleteSelected();
+  else if (k === 'r') this.rotate();
+  else if (k === 'w') this.setMode('wire');
+  else if (k === 'p') this.setMode('probe');
+  else if (k === 'escape') {
+    if (this.wireDraft) { this.wireDraft = null; this.draftPos = null; this.render(); }
+    else this.setMode('select');
+  }
+  else if (k === ' ') { if (e.preventDefault) e.preventDefault(); this.setMode('select'); }
+  else if (k === 'arrowleft') { this.offset.x += 40; this.render(); }
+  else if (k === 'arrowright') { this.offset.x -= 40; this.render(); }
+  else if (k === 'arrowup') { this.offset.y += 40; this.render(); }
+  else if (k === 'arrowdown') { this.offset.y -= 40; this.render(); }
+};
+
+Editor.prototype.onCtx = function(e) {
+  if (e.preventDefault) e.preventDefault();
+  this.hideCtxMenu();
+  var p = this.getPos(e);
+  var hit = this.hitTest(p);
+  if (hit) this.select(hit);
+  var self = this;
+  var items = [];
+  if (this.selected && this.selected.type === 'comp') {
+    items.push({ label: 'Rotate (R)', fn: function() { self.rotate(); } });
+    items.push({ label: 'Copy (Ctrl+D)', fn: function() { self.duplicate(); } });
+    items.push({ label: 'Delete (Del)', fn: function() { self.deleteSelected(); } });
+  } else if (this.selected && this.selected.type === 'wire') {
+    items.push({ label: 'Delete (Del)', fn: function() { self.deleteSelected(); } });
+  } else {
+    items.push({ label: 'Clear All', fn: function() { self.clearAll(); } });
+  }
+  items.push({ label: 'Cancel', fn: function() {} });
+  var m = this._ctxmenu;
+  m.innerHTML = '';
+  for (var i = 0; i < items.length; i++) {
+    (function(it) {
+      var d = document.createElement('div');
+      d.className = 'ctx-item';
+      d.textContent = it.label;
+      d.addEventListener('click', function(ev) {
+        if (ev.stopPropagation) ev.stopPropagation();
+        m.style.display = 'none';
+        it.fn();
+      });
+      m.appendChild(d);
+    })(items[i]);
+  }
+  m.style.display = 'block';
+  var r = this.rect();
+  m.style.left = Math.min(p.x, r.width - 280) + 'px';
+  m.style.top = Math.min(p.y, r.height - items.length * 52) + 'px';
+};
+Editor.prototype.hideCtxMenu = function() { if (this._ctxmenu) this._ctxmenu.style.display = 'none'; };
+
+Editor.prototype.setMode = function(m) {
+  this.mode = m;
+  this.wireDraft = null;
+  this.draftPos = null;
+  this.render();
+  this.emit('mode');
+};
+
+Editor.prototype.select = function(sel) {
+  this.selected = sel ? { type: sel.type, obj: sel.obj } : null;
+  this.multi = sel ? [{ type: sel.type, obj: sel.obj }] : [];
+  this.emit('select');
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.placeComponent = function(p) {
+  var w = this.toWorld(p.x, p.y);
+  var pt = this.snapPoint(w);
+  var type = this.mode;
+  var comp = {
+    id: this._id(), type: type,
+    x: pt.x, y: pt.y, rotation: this.rotation,
+    params: {}
+  };
+  var src = COMPONENT_DEFS[type].params;
+  for (var k in src) if (src.hasOwnProperty(k)) comp.params[k] = src[k];
+  this.recordUndo();
+  this.components.push(comp);
+  this.select({ type: 'comp', obj: comp });
+  this.rebuildNetlist();
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.rotate = function() {
+  if (this.selected && this.selected.type === 'comp') {
+    this.recordUndo();
+    var c = this.selected.obj;
+    c.rotation = (c.rotation + 90) % 360;
+    this.rotation = c.rotation;
+    this.rebuildNetlist();
+    this.emit('change');
+  } else {
+    this.rotation = (this.rotation + 90) % 360;
+  }
+  this.render();
+  this.emit('mode');
+};
+
+Editor.prototype.duplicate = function() {
+  if (!this.selected || this.selected.type !== 'comp') return;
+  var c = this.selected.obj;
+  this.recordUndo();
+  var nc = JSON.parse(JSON.stringify(c));
+  nc.id = this._id();
+  nc.x += GRID * 2; nc.y += GRID * 2;
+  this.components.push(nc);
+  this.selected = { type: 'comp', obj: nc };
+  this.rebuildNetlist();
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.deleteSelected = function() {
+  var targets = (this.multi && this.multi.length) ? this.multi : (this.selected ? [this.selected] : []);
+  if (!targets.length) return;
+  this.recordUndo();
+  var self = this;
+  for (var s = 0; s < targets.length; s++) {
+    if (targets[s].type === 'comp') this.components = this.components.filter(function(x) { return x !== targets[s].obj; });
+    else this.wires = this.wires.filter(function(x) { return x !== targets[s].obj; });
+  }
+  this.selected = null;
+  this.multi = [];
+  this.rebuildNetlist();
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.clearAll = function() {
+  this.recordUndo();
+  this.components = [];
+  this.wires = [];
+  this.probes = [];
+  this.selected = null;
+  this.wireDraft = null;
+  this.rebuildNetlist();
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.snapshot = function() { return JSON.stringify({ components: this.components, wires: this.wires, probes: this.probes }); };
+Editor.prototype.recordUndo = function() {
+  this.undoStack.push(this.snapshot());
+  if (this.undoStack.length > 80) this.undoStack.shift();
+  this.redoStack.length = 0;
+};
+Editor.prototype.undo = function() {
+  if (!this.undoStack.length) return;
+  this.redoStack.push(this.snapshot());
+  this.restore(this.undoStack.pop());
+};
+Editor.prototype.redo = function() {
+  if (!this.redoStack.length) return;
+  this.undoStack.push(this.snapshot());
+  this.restore(this.redoStack.pop());
+};
+Editor.prototype.restore = function(s) {
+  var o = JSON.parse(s);
+  this.components = o.components;
+  this.wires = o.wires;
+  this.probes = o.probes || [];
+  this.selected = null;
+  this.wireDraft = null;
+  this.rebuildNetlist();
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.rebuildNetlist = function() { this.netlist = new Netlist(this.components, this.wires, this.wireResistive !== false); };
+
+Editor.prototype.hitTest = function(p) {
+  var w = this.toWorld(p.x, p.y);
+  for (var i = this.components.length - 1; i >= 0; i--) {
+    var c = this.components[i];
+    if (this.inCompBounds(c, w)) return { type: 'comp', obj: c };
+  }
+  for (var j = this.wires.length - 1; j >= 0; j--) {
+    if (this.distToWire(this.wires[j], w) <= 7 / this.zoom) return { type: 'wire', obj: this.wires[j] };
+  }
+  return null;
+};
+
+Editor.prototype.inCompBounds = function(c, w) {
+  var def = COMPONENT_DEFS[c.type];
+  var mx = 0, my = 0;
+  for (var i = 0; i < def.terminals.length; i++) { mx = Math.max(mx, Math.abs(def.terminals[i].dx)); my = Math.max(my, Math.abs(def.terminals[i].dy)); }
+  var dx = w.x - c.x, dy = w.y - c.y;
+  var r = -c.rotation * Math.PI / 180;
+  var lx = dx * Math.cos(r) - dy * Math.sin(r);
+  var ly = dx * Math.sin(r) + dy * Math.cos(r);
+  return Math.abs(lx) <= mx + 15 && Math.abs(ly) <= my + 15;
+};
+
+Editor.prototype.distToWire = function(wire, w) {
+  var d = Infinity;
+  for (var i = 0; i < wire.points.length - 1; i++) {
+    d = Math.min(d, segDist(wire.points[i], wire.points[i + 1], w));
+  }
+  return d;
+};
+
+Editor.prototype.nearestTerminal = function(w, maxDist) {
+  var best = null, bd = maxDist;
+  for (var i = 0; i < this.components.length; i++) {
+    var c = this.components[i];
+    var def = COMPONENT_DEFS[c.type];
+    for (var k = 0; k < def.terminals.length; k++) {
+      var t = absTerminal(c, k);
+      var d = Math.hypot(t.x - w.x, t.y - w.y);
+      if (d < bd) { bd = d; best = { x: t.x, y: t.y }; }
+    }
+  }
+  return best;
+};
+
+Editor.prototype.isJunction = function(x, y) {
+  for (var i = 0; i < this.components.length; i++) {
+    var c = this.components[i];
+    var def = COMPONENT_DEFS[c.type];
+    for (var k = 0; k < def.terminals.length; k++) {
+      var t = absTerminal(c, k);
+      if (t.x === x && t.y === y) return true;
+    }
+  }
+  return false;
+};
+
+Editor.prototype.orthoPath = function(from, to) {
+  if (Math.abs(to.x - from.x) >= Math.abs(to.y - from.y)) {
+    return [{ x: to.x, y: from.y }, { x: to.x, y: to.y }];
+  }
+  return [{ x: from.x, y: to.y }, { x: to.x, y: to.y }];
+};
+
+Editor.prototype.pushWirePoints = function(pts) {
+  var last = this.wireDraft.points[this.wireDraft.points.length - 1];
+  for (var i = 0; i < pts.length; i++) {
+    var pt = pts[i];
+    if (pt.x === last.x && pt.y === last.y) continue;
+    this.wireDraft.points.push(pt);
+    last = pt;
+  }
+};
+
+Editor.prototype.wireClick = function(p) {
+  var w = this.toWorld(p.x, p.y);
+  if (!this.wireDraft) {
+    var term = this.nearestTerminal(w, 12 / this.zoom);
+    var pt = term ? { x: term.x, y: term.y } : this.snapPoint(w);
+    this.wireDraft = { points: [pt] };
+    this.render();
+    return;
+  }
+  var last = this.wireDraft.points[this.wireDraft.points.length - 1];
+  var term2 = this.nearestTerminal(w, 12 / this.zoom);
+  if (term2) {
+    this.pushWirePoints(this.ortho ? this.orthoPath(last, term2) : [term2]);
+    this.finishWire();
+  } else {
+    var pt2 = this.snapPoint(w);
+    this.pushWirePoints(this.ortho ? this.orthoPath(last, pt2) : [pt2]);
+    this.render();
+  }
+};
+
+Editor.prototype.finishWire = function() {
+  if (this.wireDraft.points.length >= 2) {
+    this.recordUndo();
+    this.wires.push({ id: this._id(), type: this.wireType, points: this.wireDraft.points });
+    this.rebuildNetlist();
+    this.emit('change');
+  }
+  this.wireDraft = null;
+  this.draftPos = null;
+  this.render();
+};
+
+Editor.prototype.probeClick = function(p) {
+  var w = this.toWorld(p.x, p.y);
+  var term = this.nearestTerminal(w, 12 / this.zoom);
+  var pos = null;
+  if (term) pos = term;
+  else {
+    var bd = 12 / this.zoom, bp = null;
+    for (var i = 0; i < this.wires.length; i++) {
+      var wire = this.wires[i];
+      for (var q = 0; q < wire.points.length; q++) {
+        var pt = wire.points[q];
+        var d = Math.hypot(pt.x - w.x, pt.y - w.y);
+        if (d < bd) { bd = d; bp = pt; }
+      }
+    }
+    if (bp) pos = { x: bp.x, y: bp.y };
+  }
+  if (!pos) return;
+  var idx = -1;
+  for (var j = 0; j < this.probes.length; j++) if (this.probes[j].x === pos.x && this.probes[j].y === pos.y) { idx = j; break; }
+  if (idx >= 0) this.probes.splice(idx, 1);
+  else this.probes.push({ x: pos.x, y: pos.y, color: PROBE_COLORS[this.probes.length % PROBE_COLORS.length] });
+  this.rebuildNetlist();
+  this.emit('change');
+  this.render();
+};
+
+Editor.prototype.probeNodeIndexes = function() {
+  var self = this;
+  return this.probes.map(function(pr) { return self.netlist ? self.netlist.nodeForPoint(pr.x, pr.y) : 0; });
+};
+
+Editor.prototype.zoomBy = function(f) {
+  var cw = this.canvas.clientWidth || this.canvas.getWidth() || 800;
+  var ch = this.canvas.clientHeight || this.canvas.getHeight() || 600;
+  var cx = cw / 2, cy = ch / 2;
+  var w = this.toWorld(cx, cy);
+  this.zoom = clamp(this.zoom * f, 0.15, 10);
+  this.offset.x = cx - w.x * this.zoom;
+  this.offset.y = cy - w.y * this.zoom;
+  this.render();
+};
+Editor.prototype.zoomIn = function() { this.zoomBy(1.25); };
+Editor.prototype.zoomOut = function() { this.zoomBy(0.8); };
+
+Editor.prototype.fit = function() {
+  if (!this.components.length && !this.wires.length) {
+    this.zoom = 1; this.offset = { x: 60, y: 60 }; this.render(); return;
+  }
+  var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  var acc = function(x, y) { minx = Math.min(minx, x); maxx = Math.max(maxx, x); miny = Math.min(miny, y); maxy = Math.max(maxy, y); };
+  for (var i = 0; i < this.components.length; i++) {
+    var c = this.components[i];
+    var def = COMPONENT_DEFS[c.type];
+    for (var k = 0; k < def.terminals.length; k++) { var t = absTerminal(c, k); acc(t.x, t.y); }
+  }
+  for (var j = 0; j < this.wires.length; j++) {
+    var wire = this.wires[j];
+    for (var q = 0; q < wire.points.length; q++) acc(wire.points[q].x, wire.points[q].y);
+  }
+  var pad = 60;
+  var cw = this.canvas.clientWidth || this.canvas.getWidth() || 800;
+  var ch = this.canvas.clientHeight || this.canvas.getHeight() || 600;
+  var w = cw - pad * 2, h = ch - pad * 2;
+  this.zoom = clamp(Math.min(w / Math.max(maxx - minx, 1), h / Math.max(maxy - miny, 1)), 0.1, 5);
+  this.offset.x = cw / 2 - (minx + maxx) / 2 * this.zoom;
+  this.offset.y = ch / 2 - (miny + maxy) / 2 * this.zoom;
+  this.render();
+};
+
+Editor.prototype.render = function() {
+  var ctx = this.ctx;
+  var W = this.canvas.clientWidth || this.canvas.getWidth() || 800;
+  var H = this.canvas.clientHeight || this.canvas.getHeight() || 600;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0f1117';
+  ctx.fillRect(0, 0, W, H);
+  this.drawGrid();
+  for (var i = 0; i < this.wires.length; i++) this.drawWire(this.wires[i]);
+  if (this.wireDraft) this.drawWireDraft();
+  for (var j = 0; j < this.components.length; j++) this.drawComponent(this.components[j]);
+  this.drawProbes();
+  this.drawSelection();
+  if (this.marquee) this.drawMarquee();
+  this.drawWireSnapHint();
+  this.drawPlacement();
+};
+
+Editor.prototype.drawMarquee = function() {
+  var m = this.marquee, ctx = this.ctx;
+  var a = this.toScreen(m.x0, m.y0), b = this.toScreen(m.x1, m.y1);
+  var x = Math.min(a.x, b.x), y = Math.min(a.y, b.y), w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+  ctx.fillStyle = 'rgba(77,166,255,0.08)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#4da6ff';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 4]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+};
+
+Editor.prototype.drawWireSnapHint = function() {
+  if (this.mode !== 'wire' || !this.draftPos) return;
+  var term = this.nearestTerminal(this.draftPos, 14 / this.zoom);
+  if (!term) return;
+  var ctx = this.ctx;
+  var s = this.toScreen(term.x, term.y);
+  ctx.strokeStyle = '#69f0ae';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, 7, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+};
+
+Editor.prototype.drawGrid = function() {
+  var ctx = this.ctx;
+  var g = GRID * this.zoom;
+  if (g < 6) return;
+  ctx.strokeStyle = '#171b26';
+  ctx.lineWidth = 1;
+  var x0 = this.offset.x % g, y0 = this.offset.y % g;
+  var W = this.canvas.clientWidth || this.canvas.getWidth() || 800;
+  var H = this.canvas.clientHeight || this.canvas.getHeight() || 600;
+  ctx.beginPath();
+  for (var x = x0; x <= W; x += g) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (var y = y0; y <= H; y += g) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
+};
+
+Editor.prototype.dot = function(x, y, r, fill) {
+  var ctx = this.ctx;
+  var s = this.toScreen(x, y);
+  ctx.beginPath();
+  ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = this.wireColor; ctx.fill(); }
+  else { ctx.strokeStyle = this.wireColor; ctx.lineWidth = 1.5; ctx.stroke(); }
+};
+
+Editor.prototype.drawWire = function(wire) {
+  var ctx = this.ctx;
+  var pts = wire.points;
+  var color = wire.color || this.wireColor;
+  var burned = false, temp = 0;
+  if (this.simResults && this.simResults.wires) {
+    var info = this.simResults.wires[wire.id];
+    if (info) { burned = info.burned; temp = info.t || 0; }
+  }
+  if (burned) {
+    ctx.strokeStyle = '#ff5252';
+    ctx.lineWidth = this.wireWidth;
+    ctx.setLineDash([8, 6]);
+  } else {
+    if (temp > WIRE_AMBIENT + 1) {
+      var wt = WIRE_TYPES[wire.type] || WIRE_TYPES.copper;
+      color = blendHex(color, '#ff5722', clamp((temp - WIRE_AMBIENT) / (wt.maxTemp - WIRE_AMBIENT), 0, 1));
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = this.wireWidth;
+  }
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  var s = this.toScreen(pts[0].x, pts[0].y);
+  ctx.moveTo(s.x, s.y);
+  for (var i = 1; i < pts.length; i++) {
+    var p = this.toScreen(pts[i].x, pts[i].y);
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+  for (var j = 0; j < pts.length; j++) this.dot(pts[j].x, pts[j].y, this.isJunction(pts[j].x, pts[j].y) ? 3 : 2, this.isJunction(pts[j].x, pts[j].y));
+};
+
+Editor.prototype.drawWireDraft = function() {
+  var ctx = this.ctx;
+  var pts = this.wireDraft.points;
+  ctx.strokeStyle = 'rgba(79,195,247,0.85)';
+  ctx.lineWidth = this.wireWidth;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  var s = this.toScreen(pts[0].x, pts[0].y);
+  ctx.moveTo(s.x, s.y);
+  for (var i = 1; i < pts.length; i++) {
+    var p = this.toScreen(pts[i].x, pts[i].y);
+    ctx.lineTo(p.x, p.y);
+  }
+  if (this.draftPos) {
+    var last = pts[pts.length - 1];
+    var target = this.snapPoint(this.draftPos);
+    var preview = this.ortho ? this.orthoPath(last, target) : [target];
+    for (var q = 0; q < preview.length; q++) { var pp = this.toScreen(preview[q].x, preview[q].y); ctx.lineTo(pp.x, pp.y); }
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+};
+
+Editor.prototype.drawComponent = function(c) {
+  var ctx = this.ctx;
+  var def = COMPONENT_DEFS[c.type];
+  var s = this.toScreen(c.x, c.y);
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(this.zoom, this.zoom);
+  ctx.rotate(c.rotation * Math.PI / 180);
+  ctx.strokeStyle = '#c9d6e8';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  def.draw(ctx, c, def);
+  ctx.restore();
+};
+
+Editor.prototype.drawProbes = function() {
+  for (var i = 0; i < this.probes.length; i++) {
+    var pr = this.probes[i];
+    var s = this.toScreen(pr.x, pr.y);
+    var ctx = this.ctx;
+    ctx.strokeStyle = pr.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 9, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = pr.color;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+};
+
+Editor.prototype.drawSelection = function() {
+  var ctx = this.ctx;
+  var self = this;
+  function box(c) {
+    var def = COMPONENT_DEFS[c.type];
+    var mx = 0, my = 0;
+    for (var i = 0; i < def.terminals.length; i++) { mx = Math.max(mx, Math.abs(def.terminals[i].dx)); my = Math.max(my, Math.abs(def.terminals[i].dy)); }
+    var s = self.toScreen(c.x, c.y);
+    return { x: s.x - mx * self.zoom, y: s.y - my * self.zoom, w: mx * 2 * self.zoom, h: my * 2 * self.zoom };
+  }
+  ctx.strokeStyle = '#4da6ff';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  for (var i = 0; i < this.multi.length; i++) {
+    if (this.multi[i].type !== 'comp') continue;
+    var b = box(this.multi[i].obj);
+    ctx.strokeRect(b.x - 5, b.y - 5, b.w + 10, b.h + 10);
+  }
+  ctx.setLineDash([]);
+};
+
+Editor.prototype.drawPlacement = function() {
+  if (this.mode === 'select' || this.mode === 'wire' || this.mode === 'probe' || !this.draftPos) return;
+  var ctx = this.ctx;
+  var w = this.snapPoint(this.draftPos);
+  var s = this.toScreen(w.x, w.y);
+  var type = this.mode;
+  if (!COMPONENT_DEFS[type]) return;
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.scale(this.zoom, this.zoom);
+  ctx.rotate(this.rotation * Math.PI / 180);
+  ctx.strokeStyle = 'rgba(201,214,232,0.7)';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  COMPONENT_DEFS[type].draw(ctx, { params: COMPONENT_DEFS[type].params }, COMPONENT_DEFS[type]);
+  ctx.restore();
+};
+
+// ================= UI =================
+var editor = null;
+var simState = { running: false, mode: 'dc', lastRes: null };
+
+function toast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, 2200);
+}
+
+function buildPalette() {
+  // AUI 限制：document.createElement('canvas') 动态 canvas 无 getContext，
+  // 元件库图标改用文字符号（short 代码）显示，item 用 setInnerHTML 构建
+  var list = document.getElementById('palette-list');
+  var html = '';
+  for (var g = 0; g < COMPONENT_GROUPS.length; g++) {
+    var gname = COMPONENT_GROUPS[g];
+    html += '<div class="pal-group"><div class="pal-title">' + gname + '</div><div class="pal-body">';
+    for (var type in COMPONENT_DEFS) {
+      if (!COMPONENT_DEFS.hasOwnProperty(type)) continue;
+      var def = COMPONENT_DEFS[type];
+      if (def.group !== gname) continue;
+      html += '<div class="pal-item" data-type="' + type + '">'
+        + '<div class="pal-sym">' + (def.short || type) + '</div>'
+        + '<div class="pal-name">' + def.name + '</div>'
+        + '</div>';
+    }
+    html += '</div></div>';
+  }
+  list.innerHTML = html;
+  // 事件绑定
+  var items = list.querySelectorAll('.pal-item');
+  for (var i = 0; i < items.length; i++) {
+    (function(item) {
+      item.addEventListener('click', function() {
+        var t = item.getAttribute('data-type');
+        setActivePalette(item);
+        editor.setMode(t);
+        toast('Place: ' + COMPONENT_DEFS[t].name + ' (click canvas)');
+      });
+    })(items[i]);
+  }
+}
+
+function setActivePalette(item) {
+  var items = document.querySelectorAll('.pal-item');
+  for (var i = 0; i < items.length; i++) items[i].classList.remove('active');
+  if (item) item.classList.add('active');
+}
+
+function updateToolbar() {
+  document.getElementById('btn-select').classList.toggle('active', editor.mode === 'select');
+  document.getElementById('btn-wire').classList.toggle('active', editor.mode === 'wire');
+  document.getElementById('btn-probe').classList.toggle('active', editor.mode === 'probe');
+  document.getElementById('status-mode').textContent = editor.mode.charAt(0).toUpperCase() + editor.mode.slice(1);
+  document.getElementById('status-rot').textContent = 'Rot ' + editor.rotation;
+  document.getElementById('st-c').textContent = 'Components ' + editor.components.length;
+  document.getElementById('status-wires').textContent = 'Wires ' + editor.wires.length;
+  document.getElementById('status-nodes').textContent = 'Nodes ' + (editor.netlist ? editor.netlist.numNodes : 0);
+  document.getElementById('status-probes').textContent = 'Probes ' + editor.probes.length;
+  var btnU = document.getElementById('btn-undo');
+  var btnR = document.getElementById('btn-redo');
+  if (btnU) btnU.disabled = !editor.undoStack.length;
+  if (btnR) btnR.disabled = !editor.redoStack.length;
+}
+
+function renderProps() {
+  var body = document.getElementById('prop-body');
+  if (!editor.selected || editor.selected.type !== 'comp') {
+    body.innerHTML = '<div class="hint">Select a component to edit its parameters.</div>';
+    return;
+  }
+  var c = editor.selected.obj;
+  var def = COMPONENT_DEFS[c.type];
+  var html = '<div class="prop-name">' + def.name + '</div>';
+  for (var i = 0; i < def.paramDefs.length; i++) {
+    var pd = def.paramDefs[i];
+    html += '<div class="row"><span>' + pd.label + '</span>';
+    if (pd.type === 'bool') {
+      html += '<label class="switch"><input type="checkbox" data-pkey="' + pd.key + '" ' + (c.params[pd.key] ? 'checked' : '') + '></label>';
+    } else if (pd.type === 'select') {
+      html += '<select class="tb-select" data-pkey="' + pd.key + '">';
+      for (var o = 0; o < pd.options.length; o++) {
+        html += '<option value="' + pd.options[o] + '" ' + (c.params[pd.key] === pd.options[o] ? 'selected' : '') + '>' + pd.options[o] + '</option>';
+      }
+      html += '</select>';
+    } else {
+      var unit = pd.unit || '';
+      html += '<input type="text" data-pkey="' + pd.key + '" value="' + formatSI(c.params[pd.key], unit) + '">';
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+  var inputs = body.querySelectorAll('input, select');
+  var self = this;
+  for (var j = 0; j < inputs.length; j++) {
+    (function(inp) {
+      inp.addEventListener('change', function() {
+        var key = inp.getAttribute('data-pkey');
+        var v;
+        if (inp.type === 'checkbox') v = inp.checked;
+        else if (inp.tagName === 'SELECT') v = inp.value;
+        else v = parseSI(inp.value);
+        if (isNaN(v) && inp.type !== 'checkbox' && inp.tagName !== 'SELECT') return;
+        editor.recordUndo();
+        c.params[key] = v;
+        editor.rebuildNetlist();
+        editor.emit('change');
+        editor.render();
+        renderProps();
+        toast(def.name + ' updated');
+      });
+    })(inputs[j]);
+  }
+}
+
+// ================= Waveform =================
+function drawWaveform(data) {
+  var cv = document.getElementById('wave');
+  if (!cv) return;
+  var ctx = cv.getContext('2d');
+  var W = 520, H = 300;
+  cv.setAttribute('width', W);
+  cv.setAttribute('height', H);
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#0f1117';
+  ctx.fillRect(0, 0, W, H);
+  if (!data || !data.length) {
+    ctx.fillStyle = '#8b95a7';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No waveform data', W / 2, H / 2);
+    return;
+  }
+  var n = data.length;
+  var minV = Infinity, maxV = -Infinity;
+  for (var i = 0; i < n; i++) {
+    minV = Math.min(minV, data[i].v);
+    maxV = Math.max(maxV, data[i].v);
+  }
+  if (minV === maxV) { minV -= 1; maxV += 1; }
+  var t0 = data[0].t, t1 = data[n - 1].t;
+  var pad = 20;
+  ctx.strokeStyle = '#232a38';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, pad); ctx.lineTo(pad, H - pad);
+  ctx.moveTo(pad, H - pad); ctx.lineTo(W - pad, H - pad);
+  ctx.stroke();
+  ctx.fillStyle = '#8b95a7';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(formatSI(maxV, 'V'), 2, pad + 4);
+  ctx.fillText(formatSI(minV, 'V'), 2, H - pad);
+  ctx.fillText(formatSI(t0, 's'), pad, H - 4);
+  ctx.fillText(formatSI(t1, 's'), W - 70, H - 4);
+  ctx.strokeStyle = '#4da6ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (var i2 = 0; i2 < n; i2++) {
+    var x = pad + (data[i2].t - t0) / (t1 - t0) * (W - pad * 2);
+    var y = pad + (maxV - data[i2].v) / (maxV - minV) * (H - pad * 2);
+    if (i2 === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+// ================= AUI Bridge (file I/O via Java) =================
+function bridgeRequest(cmd, cb) {
+  var req = document.getElementById('cryptand-req');
+  var resp = document.getElementById('cryptand-resp');
+  if (!req || !resp) { if (cb) cb(null); return; }
+  req.setValue(cmd);
+  var fired = false;
+  var handler = function() {
+    if (fired) return;
+    fired = true;
+    document.removeEventListener('cryptand:response', handler);
+    if (cb) {
+      try { cb(JSON.parse(resp.getValue())); }
+      catch (e) { cb(null); }
+    }
+  };
+  document.addEventListener('cryptand:response', handler);
+  document.dispatchEvent(new Event(document, 'cryptand:request'));
+}
+
+var EXAMPLES = {
+  'Voltage Divider': {
+    version: 1, components: [
+      { id: 1, type: 'vsource', x: 0, y: 0, rotation: 0, params: { voltage: 5 } },
+      { id: 2, type: 'resistor', x: 0, y: 120, rotation: 0, params: { resistance: 1000 } },
+      { id: 3, type: 'resistor', x: 0, y: 240, rotation: 0, params: { resistance: 1000 } },
+      { id: 4, type: 'ground', x: 0, y: 360, rotation: 0, params: {} }
+    ],
+    wires: [
+      { id: 1, type: 'copper', points: [{ x: 0, y: 50 }, { x: 0, y: 120 }] },
+      { id: 2, type: 'copper', points: [{ x: 0, y: 170 }, { x: 0, y: 240 }] },
+      { id: 3, type: 'copper', points: [{ x: 0, y: 290 }, { x: 0, y: 360 }] }
+    ],
+    probes: []
+  },
+  'RC Charge': {
+    version: 1, components: [
+      { id: 1, type: 'vsource', x: 0, y: 0, rotation: 0, params: { voltage: 5 } },
+      { id: 2, type: 'resistor', x: 0, y: 120, rotation: 0, params: { resistance: 1000 } },
+      { id: 3, type: 'capacitor', x: 0, y: 240, rotation: 0, params: { capacitance: 0.0001 } },
+      { id: 4, type: 'ground', x: 0, y: 360, rotation: 0, params: {} }
+    ],
+    wires: [
+      { id: 1, type: 'copper', points: [{ x: 0, y: 50 }, { x: 0, y: 120 }] },
+      { id: 2, type: 'copper', points: [{ x: 0, y: 170 }, { x: 0, y: 240 }] },
+      { id: 3, type: 'copper', points: [{ x: 0, y: 290 }, { x: 0, y: 360 }] }
+    ],
+    probes: []
+  },
+  'LED Indicator': {
+    version: 1, components: [
+      { id: 1, type: 'vsource', x: 0, y: 0, rotation: 0, params: { voltage: 5 } },
+      { id: 2, type: 'resistor', x: 0, y: 120, rotation: 0, params: { resistance: 220 } },
+      { id: 3, type: 'led', x: 0, y: 240, rotation: 0, params: {} },
+      { id: 4, type: 'ground', x: 0, y: 360, rotation: 0, params: {} }
+    ],
+    wires: [
+      { id: 1, type: 'copper', points: [{ x: 0, y: 50 }, { x: 0, y: 120 }] },
+      { id: 2, type: 'copper', points: [{ x: 0, y: 170 }, { x: 0, y: 240 }] },
+      { id: 3, type: 'copper', points: [{ x: 0, y: 290 }, { x: 0, y: 360 }] }
+    ],
+    probes: []
+  },
+  'Rectifier': {
+    version: 1, components: [
+      { id: 1, type: 'acsource', x: 0, y: 0, rotation: 0, params: { amplitude: 5, frequency: 50 } },
+      { id: 2, type: 'diode', x: 0, y: 120, rotation: 0, params: {} },
+      { id: 3, type: 'resistor', x: 0, y: 240, rotation: 0, params: { resistance: 1000 } },
+      { id: 4, type: 'ground', x: 0, y: 360, rotation: 0, params: {} }
+    ],
+    wires: [
+      { id: 1, type: 'copper', points: [{ x: 0, y: 50 }, { x: 0, y: 120 }] },
+      { id: 2, type: 'copper', points: [{ x: 0, y: 170 }, { x: 0, y: 240 }] },
+      { id: 3, type: 'copper', points: [{ x: 0, y: 290 }, { x: 0, y: 360 }] }
+    ],
+    probes: []
+  }
+};
+
+function loadJSON(data) {
+  if (!data || !data.components) return;
+  editor.components = data.components || [];
+  editor.wires = data.wires || [];
+  editor.probes = data.probes || [];
+  editor.selected = null;
+  editor.multi = [];
+  editor.wireDraft = null;
+  editor.rebuildNetlist();
+  editor.emit('change');
+  editor.render();
+  editor.fit();
+}
+
+function saveCircuit() {
+  var data = editor.snapshot();
+  var json = document.getElementById('cryptand-json');
+  if (json) {
+    json.setValue(data);
+    document.dispatchEvent(new Event(document, 'cryptand:save'));
+    toast('Circuit saved');
+  } else {
+    toast('Save bridge unavailable');
+  }
+}
+
+function openCircuit() {
+  var modal = document.getElementById('modal-open');
+  var list = document.getElementById('open-list');
+  list.innerHTML = '<div class="hint">Loading...</div>';
+  modal.classList.remove('hidden');
+  bridgeRequest('list', function(res) {
+    if (!res || !res.files) { list.innerHTML = '<div class="hint">No circuits found.</div>'; return; }
+    list.innerHTML = '';
+    for (var i = 0; i < res.files.length; i++) {
+      (function(fname) {
+        var b = document.createElement('button');
+        b.className = 'tpl-btn';
+        b.textContent = fname;
+        b.addEventListener('click', function() {
+          bridgeRequest('load:' + fname, function(res2) {
+            if (res2 && res2.circuit) {
+              loadJSON(res2.circuit);
+              toast('Loaded ' + fname);
+            } else {
+              toast('Load failed');
+            }
+            modal.classList.add('hidden');
+          });
+        });
+        list.appendChild(b);
+      })(res.files[i]);
+    }
+    if (!res.files.length) list.innerHTML = '<div class="hint">No circuits found.</div>';
+  });
+}
+
+function showExamples() {
+  var modal = document.getElementById('modal-examples');
+  var list = document.getElementById('example-list');
+  list.innerHTML = '';
+  for (var name in EXAMPLES) {
+    if (!EXAMPLES.hasOwnProperty(name)) continue;
+    (function(n, data) {
+      var b = document.createElement('button');
+      b.className = 'tpl-btn';
+      b.textContent = n;
+      b.addEventListener('click', function() {
+        loadJSON(JSON.parse(JSON.stringify(data)));
+        modal.classList.add('hidden');
+        toast('Loaded example: ' + n);
+      });
+      list.appendChild(b);
+    })(name, EXAMPLES[name]);
+  }
+  modal.classList.remove('hidden');
+}
+
+// ================= Simulation (via Java bridge) =================
+// 元件 → 内核网表元素（与 test/js/kernel.js buildKernelRequest 一致）
+function buildKernelRequest(editor, mode, duration, step, probes) {
+  var nl = new Netlist(editor.components, editor.wires, true);
+  var elements = [];
+  var nextNode = nl.numNodes;
+  var warnings = [];
+
+  for (var ci = 0; ci < editor.components.length; ci++) {
+    var c = editor.components[ci];
+    var nd = c._nodeIdx;
+    switch (c.type) {
+      case 'resistor': case 'potentiometer': case 'lamp': case 'heater':
+      case 'bell': case 'carbon_pile': case 'rheostat': case 'plotter': case 'gauge': {
+        elements.push({
+          id: c.id, kind: 'resistor', a: nd[0], b: nd[1],
+          value: c.params.resistance || 0,
+          tempCoef: c.params.tempCoef || 0,
+          thermalConductance: c.params.thermalConductance || 0,
+          heatCapacity: c.params.heatCapacity || 0
+        });
+        break;
+      }
+      case 'connector':
+        elements.push({ id: c.id, kind: 'resistor', a: nd[0], b: nd[1], value: Math.max(c.params.resistance || 0, 0.001) });
+        break;
+      case 'capacitor':
+        elements.push({ id: c.id, kind: 'capacitor', a: nd[0], b: nd[1], value: c.params.capacitance || 0 });
+        break;
+      case 'inductor': case 'fan': case 'motor': case 'electromagnet': case 'basin_heater': {
+        var mid = nextNode++;
+        elements.push({ id: c.id, kind: 'inductor', a: nd[0], b: mid, value: c.params.inductance || 0 });
+        elements.push({
+          id: c.id + '.r', kind: 'resistor', a: mid, b: nd[1],
+          value: c.params.resistance || 0,
+          tempCoef: c.params.tempCoef || 0,
+          thermalConductance: c.params.thermalConductance || 0,
+          heatCapacity: c.params.heatCapacity || 0
+        });
+        break;
+      }
+      case 'vsource':
+        elements.push({ id: c.id, kind: 'vsource', a: nd[0], b: nd[1], value: c.params.voltage || 0, series: 0.01 });
+        break;
+      case 'generator':
+        elements.push({ id: c.id, kind: 'vsource', a: nd[0], b: nd[1], value: c.params.voltage || 0, series: c.params.resistance || 0.5 });
+        break;
+      case 'acsource':
+        elements.push({
+          id: c.id, kind: 'acsource', a: nd[0], b: nd[1],
+          amplitude: c.params.amplitude || 0, frequency: c.params.frequency || 0, series: 0.01
+        });
+        break;
+      case 'isource':
+        elements.push({ id: c.id, kind: 'isource', a: nd[0], b: nd[1], value: c.params.current || 0 });
+        break;
+      case 'switch': case 'fuse': case 'hvswitch': case 'breaker': case 'contactor':
+        if (c.params.closed) elements.push({ id: c.id, kind: 'resistor', a: nd[0], b: nd[1], value: 0.1 });
+        break;
+      case 'transformer': case 'variac': {
+        var k = nextNode++;
+        elements.push({ id: c.id, kind: 'transformer', a1: nd[0], a2: nd[1], b1: nd[2], b2: nd[3], k: k, ratio: c.params.ratio || 1 });
+        break;
+      }
+      case 'three_phase_transformer': {
+        for (var i = 0; i < 3; i++) {
+          var k2 = nextNode++;
+          elements.push({ id: c.id + '.' + i, kind: 'transformer', a1: nd[i], a2: nd[3], b1: nd[4 + i], b2: nd[7], k: k2, ratio: c.params.ratio || 1 });
+        }
+        break;
+      }
+      case 'wavesource':
+        elements.push({ id: c.id, kind: 'wavesource', a: nd[0], b: nd[1], waveform: c.params.waveform || 'SINE', amplitude: c.params.amplitude || 0, frequency: c.params.frequency || 0, phase: c.params.phase || 0, duty: (c.params.duty != null) ? c.params.duty : 0.5, offset: c.params.offset || 0, series: 0.01 });
+        break;
+      case 'three_phase_source':
+        for (var i2 = 0; i2 < 3; i2++) {
+          elements.push({ id: c.id + '.' + i2, kind: 'wavesource', a: nd[i2], b: nd[3], waveform: 'SINE', amplitude: c.params.amplitude || 0, frequency: c.params.frequency || 0, phase: i2 * 120, series: 0.01 });
+        }
+        break;
+      case 'vfd':
+        for (var i3 = 0; i3 < 3; i3++) {
+          elements.push({ id: c.id + '.' + i3, kind: 'wavesource', a: nd[2 + i3], b: nd[5], waveform: 'SINE', amplitude: c.params.amplitude || 0, frequency: c.params.frequency || 0, phase: i3 * 120, series: 0.01 });
+        }
+        break;
+      case 'oscillator': case 'radio_transmitter':
+        elements.push({ id: c.id, kind: 'acsource', a: nd[0], b: nd[1], amplitude: c.params.amplitude || 0, frequency: c.params.frequency || 0, series: 0.01 });
+        break;
+      case 'antenna':
+        elements.push({ id: c.id, kind: 'resistor', a: nd[0], b: nd[1], value: (c.params.radiationR || 0) + (c.params.lossR || 0) });
+        break;
+      case 'speaker': case 'radio_receiver': case 'dc_motor': case 'induction_motor': case 'brushless_motor': {
+        var mid2 = nextNode++;
+        elements.push({ id: c.id, kind: 'inductor', a: nd[0], b: mid2, value: c.params.inductance || 0 });
+        elements.push({ id: c.id + '.r', kind: 'resistor', a: mid2, b: nd[1], value: c.params.resistance || 0, tempCoef: c.params.tempCoef || 0, thermalConductance: c.params.thermalConductance || 0, heatCapacity: c.params.heatCapacity || 0 });
+        break;
+      }
+      case 'three_phase_motor':
+        for (var i4 = 0; i4 < 3; i4++) {
+          var mid3 = nextNode++;
+          elements.push({ id: c.id + '.' + i4, kind: 'inductor', a: nd[i4], b: mid3, value: c.params.inductance || 0 });
+          elements.push({ id: c.id + '.' + i4 + '.r', kind: 'resistor', a: mid3, b: nd[3], value: c.params.resistance || 0, tempCoef: c.params.tempCoef || 0, thermalConductance: c.params.thermalConductance || 0, heatCapacity: c.params.heatCapacity || 0 });
+        }
+        break;
+      case 'solar_panel':
+        elements.push({ id: c.id, kind: 'isource', a: nd[0], b: nd[1], value: c.params.photoCurrent || c.params.current || 0 });
+        break;
+      case 'synchronous_motor':
+        elements.push({ id: c.id, kind: 'vsource', a: nd[0], b: nd[1], value: c.params.voltage || 0, series: c.params.resistance || 0.5 });
+        break;
+      case 'electromachine':
+        if (c.params.mode === 'generator') {
+          elements.push({ id: c.id, kind: 'vsource', a: nd[0], b: nd[1], value: c.params.voltage || 0, series: c.params.resistance || 0.5 });
+        } else {
+          var mid4 = nextNode++;
+          elements.push({ id: c.id, kind: 'inductor', a: nd[0], b: mid4, value: c.params.inductance || 0 });
+          elements.push({ id: c.id + '.r', kind: 'resistor', a: mid4, b: nd[1], value: c.params.resistance || 0, tempCoef: c.params.tempCoef || 0, thermalConductance: c.params.thermalConductance || 0, heatCapacity: c.params.heatCapacity || 0 });
+        }
+        break;
+      case 'rectifier':
+        elements.push({ id: c.id + '.d1', kind: 'diode', a: nd[0], b: nd[2] });
+        elements.push({ id: c.id + '.d2', kind: 'diode', a: nd[1], b: nd[2] });
+        elements.push({ id: c.id + '.d3', kind: 'diode', a: nd[3], b: nd[0] });
+        elements.push({ id: c.id + '.d4', kind: 'diode', a: nd[3], b: nd[1] });
+        elements.push({ id: c.id + '.r', kind: 'resistor', a: nd[2], b: nd[3], value: c.params.loadR || 1e6 });
+        break;
+      case 'three_phase_rectifier':
+        for (var i5 = 0; i5 < 3; i5++) elements.push({ id: c.id + '.d' + i5, kind: 'diode', a: nd[i5], b: nd[4] });
+        elements.push({ id: c.id + '.r', kind: 'resistor', a: nd[4], b: nd[5], value: c.params.loadR || 1e6 });
+        break;
+      case 'diode': case 'led':
+        elements.push({ id: c.id, kind: 'diode', a: nd[0], b: nd[1], vth: c.type === 'led' ? 1.2 : 0.7 });
+        break;
+      case 'vccs': case 'vcvs': case 'dc_dc': case 'inverter': case 'electron_tube': case 'vfet': case 'mutual_inductor': case 'npn':
+        warnings.push('Kernel does not support ' + c.type + ' (skipped #' + c.id + ')');
+        break;
+      case 'ground':
+        break;
+      default:
+        warnings.push('Unknown component type ' + c.type + ' (skipped)');
+    }
+  }
+
+  // 导线段 → 电阻支路（带温度模型参数）
+  for (var sg = 0; sg < nl.wireSegments.length; sg++) {
+    var seg = nl.wireSegments[sg];
+    var wt = WIRE_TYPES[seg.wire.type] || WIRE_TYPES.copper;
+    var R = Math.max(wt.resistancePerMeter * Math.max(seg.length, 0.001), 1e-9);
+    elements.push({
+      id: seg.wire.id, kind: 'wire', a: seg.n1, b: seg.n2, r: R,
+      type: seg.wire.type || 'copper', name: wt.name, length: seg.length,
+      ratedCurrent: wt.ratedCurrent,
+      thermalConductance: wt.thermalConductance,
+      heatCapacity: wt.heatCapacity,
+      maxTemp: wt.maxTemp
+    });
+  }
+
+  return {
+    mode: mode || 'dc',
+    duration: (duration != null) ? duration : 0.05,
+    step: (step != null) ? step : 1e-4,
+    nodeCount: nextNode,
+    groundNode: 0,
+    elements: elements,
+    probes: probes || [],
+    warnings: warnings
+  };
+}
+
+// 内核响应 → 展示结构（V 数组 + 元件/导线 Map + 波形）
+function normalizeKernelResponse(res, req) {
+  var N = (res.nodeVoltages || []).length;
+  var V = new Array(N);
+  for (var i = 0; i < N; i++) V[i] = res.nodeVoltages[i] || 0;
+  var currents = {};
+  for (var ei = 0; ei < (res.components || []).length; ei++) {
+    var e = res.components[ei];
+    if (typeof e.id !== 'number') continue;
+    currents[e.id] = { i: e.i || 0, p: e.p || 0, stored: e.stored || 0, t: e.t };
+  }
+  var wires = {};
+  for (var wi = 0; wi < (res.wires || []).length; wi++) {
+    var w = res.wires[wi];
+    wires[w.id] = {
+      type: w.type || 'copper', name: w.name || 'Wire',
+      length: w.length || 0, r: w.r || 0,
+      i: w.i || 0, p: w.p || 0, t: (w.t != null) ? w.t : WIRE_AMBIENT,
+      ratedCurrent: w.ratedCurrent || 0,
+      load: w.load || 0, energy: w.energy || 0,
+      burned: !!w.burned
+    };
+  }
+  return { V: V, mode: res.mode || req.mode || 'dc', currents: currents, wires: wires };
+}
+
+function runSim() {
+  var mode = simState.mode;
+  simState.running = true;
+  var status = document.getElementById('sim-status');
+  status.textContent = 'Simulating...';
+  document.getElementById('sim-prog').style.width = '40%';
+  var steps = parseInt(document.getElementById('sim-steps').value) || 500;
+  var endTime = parseFloat(document.getElementById('sim-end').value) || 0.1;
+  var maxStep = parseFloat(document.getElementById('sim-maxstep').value) || 0.001;
+  var data = buildKernelRequest(editor, mode, endTime, maxStep, editor.probeNodeIndexes());
+  data.warnings = data.warnings || [];
+  var req = document.getElementById('cryptand-req');
+  var resp = document.getElementById('cryptand-resp');
+  if (!req || !resp) {
+    status.textContent = 'Sim bridge unavailable';
+    simState.running = false;
+    document.getElementById('sim-prog').style.width = '0%';
+    return;
+  }
+  req.setValue('sim:' + JSON.stringify(data));
+  var fired = false;
+  var handler = function() {
+    if (fired) return;
+    fired = true;
+    document.removeEventListener('cryptand:response', handler);
+    document.getElementById('sim-prog').style.width = '100%';
+    simState.running = false;
+    try {
+      var res = JSON.parse(resp.getValue());
+      if (res && res.ok !== false) {
+        simState.lastRes = res;
+        var norm = normalizeKernelResponse(res, data);
+        editor.simResults = norm;
+        editor.render();
+        status.textContent = 'Done: ' + (res.runtimeMs !== undefined ? res.runtimeMs + ' ms' : '') + (data.warnings.length ? ' (' + data.warnings.length + ' warnings)' : '');
+        document.getElementById('sim-runtime').textContent = res.runtimeMs !== undefined ? res.runtimeMs + ' ms' : '-';
+        renderResults(res, norm, data);
+        drawWaveform(res.transient && res.transient.times ? buildWaveData(res) : null);
+      } else {
+        status.textContent = (res && res.error) || 'Simulation failed';
+      }
+    } catch (e) {
+      status.textContent = 'Sim parse error';
+    }
+    setTimeout(function() { document.getElementById('sim-prog').style.width = '0%'; }, 400);
+  };
+  document.addEventListener('cryptand:response', handler);
+  document.dispatchEvent(new Event(document, 'cryptand:request'));
+}
+
+// 从瞬态结果构建波形数据点：tr.times + tr.waveforms[probeIdx][]
+function buildWaveData(res) {
+  var tr = res.transient;
+  if (!tr || !tr.times || !tr.times.length) return null;
+  var wfs = tr.waveforms || [];
+  var n = tr.times.length;
+  var out = [];
+  for (var p = 0; p < wfs.length; p++) {
+    var arr = wfs[p] || [];
+    var len = Math.min(n, arr.length);
+    for (var i = 0; i < len; i++) {
+      out.push({ t: tr.times[i], v: arr[i] || 0 });
+    }
+    if (wfs.length > 1) break; // 只画第一条探针波形（多探针后续可扩展）
+  }
+  if (!out.length && wfs.length) {
+    var arr0 = wfs[0] || [];
+    for (var i2 = 0; i2 < arr0.length; i2++) out.push({ t: tr.times[Math.min(i2, n - 1)], v: arr0[i2] || 0 });
+  }
+  return out.length ? out : null;
+}
+
+function stopSim() {
+  simState.running = false;
+  document.getElementById('sim-status').textContent = 'Stopped';
+  document.getElementById('sim-prog').style.width = '0%';
+}
+
+function renderResults(res, norm, req) {
+  var body = document.getElementById('res-body');
+  var html = '';
+  if (req && req.warnings && req.warnings.length) {
+    html += '<div class="res-meta" style="color:#d29922">Warnings: ' + req.warnings.join('; ') + '</div>';
+  }
+  if (res.meta) {
+    html += '<div class="res-meta">' + res.meta + '</div>';
+  }
+  var N = (res.nodeVoltages || []).length;
+  if (N > 0) {
+    html += '<div class="panel-title sub">Node Voltages</div>';
+    html += '<table class="res-table"><tr><th>Node</th><th>Voltage</th></tr>';
+    for (var i = 0; i < N; i++) {
+      var v = res.nodeVoltages[i] || 0;
+      html += '<tr><td>N' + i + '</td><td>' + formatSI(v, 'V') + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  var comps = res.components || [];
+  if (comps.length) {
+    html += '<div class="panel-title sub">Components</div>';
+    html += '<table class="res-table"><tr><th>ID</th><th>Current</th><th>Power</th><th>Temp</th></tr>';
+    for (var c = 0; c < comps.length; c++) {
+      var e = comps[c];
+      if (typeof e.id !== 'number') continue;
+      var tTxt = (e.t != null) ? Math.round(e.t) + '\u00B0C' : '-';
+      html += '<tr><td>#' + e.id + '</td><td>' + formatSI(e.i || 0, 'A') + '</td><td>' + formatSI(e.p || 0, 'W') + '</td><td>' + tTxt + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  var wires = res.wires || [];
+  if (wires.length) {
+    html += '<div class="panel-title sub">Wires</div>';
+    html += '<table class="res-table"><tr><th>ID</th><th>Current</th><th>Temp</th><th>State</th></tr>';
+    for (var w = 0; w < wires.length; w++) {
+      var wd = wires[w];
+      var state = wd.burned ? '<span style="color:#ff5252">BURNED</span>' : (wd.t > WIRE_AMBIENT + 1 ? 'Hot' : 'OK');
+      html += '<tr><td>#' + wd.id + '</td><td>' + formatSI(wd.i || 0, 'A') + '</td><td>' + Math.round(wd.t != null ? wd.t : WIRE_AMBIENT) + '\u00B0C</td><td>' + state + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  if (res.results && res.results.length) {
+    html += '<div class="panel-title sub">Summary</div>';
+    html += '<table class="res-table"><tr><th>Name</th><th>Value</th></tr>';
+    for (var r = 0; r < res.results.length; r++) {
+      html += '<tr><td>' + res.results[r].name + '</td><td>' + res.results[r].value + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  if (!html) html = '<div class="hint">Run a simulation to see results.</div>';
+  body.innerHTML = html;
+}
+
+// ================= Init =================
+function init() {
+  var cv = document.getElementById('canvas');
+  editor = new Editor(cv);
+  editor.on('mode', updateToolbar);
+  editor.on('select', function() { updateToolbar(); renderProps(); });
+  editor.on('change', function() { updateToolbar(); });
+  buildPalette();
+  updateToolbar();
+  renderProps();
+
+  // Toolbar buttons
+  function bind(id, fn) {
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('click', fn);
+  }
+  bind('btn-select', function() { setActivePalette(null); editor.setMode('select'); });
+  bind('btn-wire', function() { setActivePalette(null); editor.setMode('wire'); });
+  bind('btn-probe', function() { setActivePalette(null); editor.setMode('probe'); });
+  bind('btn-rotate', function() { editor.rotate(); });
+  bind('btn-undo', function() { editor.undo(); });
+  bind('btn-redo', function() { editor.redo(); });
+  bind('btn-dup', function() { editor.duplicate(); });
+  bind('btn-del', function() { editor.deleteSelected(); });
+  bind('btn-zoomin', function() { editor.zoomIn(); });
+  bind('btn-zoomout', function() { editor.zoomOut(); });
+  bind('btn-fit', function() { editor.fit(); });
+  bind('btn-save', function() { saveCircuit(); });
+  bind('btn-open', function() { openCircuit(); });
+  bind('btn-examples', function() { showExamples(); });
+  bind('btn-dc', function() { simState.mode = 'dc'; runSim(); });
+  bind('btn-trans', function() { simState.mode = 'transient'; runSim(); });
+  bind('btn-stop', function() { stopSim(); });
+  bind('btn-close-ex', function() { document.getElementById('modal-examples').classList.add('hidden'); });
+  bind('btn-close-open', function() { document.getElementById('modal-open').classList.add('hidden'); });
+
+  var chkGrid = document.getElementById('chk-grid');
+  if (chkGrid) chkGrid.addEventListener('change', function() { editor.gridSnap = chkGrid.checked; editor.render(); });
+  var chkOrtho = document.getElementById('chk-ortho');
+  if (chkOrtho) chkOrtho.addEventListener('change', function() { editor.ortho = chkOrtho.checked; });
+  var chkRes = document.getElementById('chk-res');
+  if (chkRes) chkRes.addEventListener('change', function() { editor.wireResistive = chkRes.checked; editor.rebuildNetlist(); editor.render(); });
+  var selWT = document.getElementById('sel-wiretype');
+  if (selWT) selWT.addEventListener('change', function() { editor.wireType = selWT.value; });
+  var wc = document.getElementById('wire-color');
+  if (wc) wc.addEventListener('change', function() { editor.wireColor = wc.value; editor.render(); });
+
+  editor.on('save', function() { saveCircuit(); });
+  editor.on('open', function() { openCircuit(); });
+
+  // Status coords
+  var cv2 = document.getElementById('canvas');
+  if (cv2 && cv2.addEventListener) {
+    cv2.addEventListener('mousemove', function(e) {
+      var p = editor.getPos(e);
+      var w = editor.toWorld(p.x, p.y);
+      document.getElementById('status-coords').textContent = Math.round(w.x) + ', ' + Math.round(w.y);
+    });
+  }
+  toast('EDA Editor ready');
+}
+
+if (document.addEventListener) {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>

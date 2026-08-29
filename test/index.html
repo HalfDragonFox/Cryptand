@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Cryptand 电路模拟器</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="toolbar"></header>
+  <div id="main">
+    <aside id="palette">
+      <div class="side-title">元件库</div>
+      <div id="palette-list"></div>
+    </aside>
+    <div id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="toast"></div>
+    </div>
+    <aside id="side">
+      <section class="panel" id="props-panel"></section>
+      <section class="panel" id="sim-panel"></section>
+      <section class="panel" id="results-panel"></section>
+    </aside>
+  </div>
+  <footer id="statusbar">
+    <span id="status-msg">就绪</span>
+    <span id="status-info"></span>
+    <span id="status-coords"></span>
+  </footer>
+</div>
+<div id="mobile-overlay" class="mobile-overlay"></div>
+<div id="ctxmenu"></div>
+<input type="file" id="fileinput" accept=".json,application/json" hidden>
+<div id="help-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3>操作说明</h3>
+    <ul>
+      <li>点击左侧元件库中的元件，再到画布上点击放置（可连续放置）</li>
+      <li>选择工具：单击选中元件，拖动移动；Delete 删除，R 旋转，Ctrl+D 复制</li>
+      <li>导线工具：点击端点开始布线，点击空白添加拐点，点击另一端结束；Esc 取消</li>
+      <li>探针工具：点击导线或引脚添加电压探针，瞬态仿真后显示波形</li>
+      <li>滚轮缩放，中键拖动平移，右键弹出快捷菜单</li>
+      <li>Ctrl+Z / Ctrl+Y 撤销重做，Ctrl+S 保存，Ctrl+O 打开</li>
+      <li>仿真前需放置「地线」元件作为电压参考点</li>
+    </ul>
+    <button id="help-close">关闭</button>
+  </div>
+</div>
+<script src="js/components.js"></script>
+<script src="js/simulator.js"></script>
+<script src="js/kernel.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

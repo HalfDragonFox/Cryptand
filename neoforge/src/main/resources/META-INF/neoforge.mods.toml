@@ -5,10 +5,32 @@ license = "All Rights Reserved"
 [[mixins]]
 config = "cryptand.mixins.json"
 
+[[mixins]]
+config = "cryptand.core.mixins.json"
+
+[[mixins]]
+config = "cryptand.powergrid.mixins.json"
+
+[[mixins]]
+config = "cryptand.railway.mixins.json"
+
+[[mixins]]
+config = "cryptand.cee.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.mixins.json"
+
+[[mixins]]
+config = "cryptand.create.mixins.json"
+
+[[mixins]]
+config = "cryptand.aeronautics.mixins.json"
+
 [[mods]]
 modId = "cryptand"
 version = "${version}"
 displayName = "Cryptand Mod"
+logoFile = "icon.png"
 authors = "HalfDragonFox"
 description = '''
 Cryptand Mod - Multi-threading optimization for Create: Power Grid

@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.cee.mixin.sable",
+  "plugin": "com.hdf.cryptand.neoforge.cee.mixin.sable.SableMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [],
+  "mixins": [
+    "SableAssemblyMoveMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,13 @@
+============================================
+  Cryptand 电路模拟器 启动器
+============================================
+[1/3] 启动前端服务器 ( http://127.0.0.1:12789/index.html )
+       前端服务器已启动
+[2/3] 打开前端页面 ...
+[3/3] 启动独立 Java 内核服务端 ...
+       在新窗口启动内核服务端（首次运行需编译引擎，稍候）...
+[run] starting standalone kernel server ...
+[KernelServer] �����ں˷������������: http://127.0.0.1:12787/ (health/simulate)
+[KernelServer] �ں�: Network + RealMnaSolver/ComplexMnaSolver (com.hdf.cryptand.engine)
+[KernelServer] ������Ctrl+C �˳���
+^CTerminate batch job (Y/N)? 

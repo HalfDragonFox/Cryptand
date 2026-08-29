@@ -1,0 +1,130 @@
+{
+	"format_version": "1.21.6",
+	"credit": "Made with Blockbench",
+	"texture_size": [32, 32],
+	"textures": {
+		"0": "cryptand:block/cee_pantograph",
+		"1": "cryptand:block/cee_double_pantograph",
+		"particle": "cryptand:block/cee_pantograph"
+	},
+	"elements": [
+		{
+			"from": [-1, -4.2, -2],
+			"to": [-1, -0.2, 2],
+			"rotation": {"angle": 0, "axis": "y", "origin": [-1, -2.2, -1]},
+			"faces": {
+				"east": {"uv": [10, 0, 12, 2], "texture": "#1"},
+				"west": {"uv": [10, 0, 12, 2], "texture": "#1"}
+			}
+		},
+		{
+			"from": [17, -4.2, -2],
+			"to": [17, -0.2, 2],
+			"rotation": {"angle": 0, "axis": "y", "origin": [17, -2.2, -1]},
+			"faces": {
+				"east": {"uv": [10, 0, 12, 2], "texture": "#1"},
+				"west": {"uv": [10, 0, 12, 2], "texture": "#1"}
+			}
+		},
+		{
+			"from": [-9, -0.25, -3.5],
+			"to": [25, 1.75, -1.5],
+			"rotation": {"angle": 0, "axis": "y", "origin": [6, -0.25, -3]},
+			"faces": {
+				"north": {"uv": [0, 15, 16, 16], "texture": "#0"},
+				"east": {"uv": [11, 13, 12, 14], "texture": "#0"},
+				"south": {"uv": [0, 16, 16, 15], "texture": "#0"},
+				"west": {"uv": [11, 13, 12, 14], "texture": "#0"},
+				"up": {"uv": [0, 15, 16, 16], "texture": "#0"},
+				"down": {"uv": [0, 15, 16, 16], "texture": "#0"}
+			}
+		},
+		{
+			"from": [-12.59579, -0.84579, -3.51],
+			"to": [-7.57579, 1.17421, -1.49],
+			"rotation": {"angle": 45, "axis": "z", "origin": [-9, -0.25, -3]},
+			"faces": {
+				"north": {"uv": [13.5, 12.5, 16, 13.5], "texture": "#0"},
+				"south": {"uv": [13.5, 13.5, 16, 12.5], "texture": "#0"},
+				"west": {"uv": [12.5, 12.5, 13.5, 13.5], "texture": "#0"},
+				"up": {"uv": [13.5, 12.5, 16, 13.5], "texture": "#0"},
+				"down": {"uv": [13.5, 12.5, 16, 13.5], "texture": "#0"}
+			}
+		},
+		{
+			"from": [23.57579, -0.84579, -3.51],
+			"to": [28.59579, 1.17421, -1.49],
+			"rotation": {"angle": -45, "axis": "z", "origin": [25, -0.25, -3]},
+			"faces": {
+				"north": {"uv": [16, 12.5, 13.5, 13.5], "texture": "#0"},
+				"east": {"uv": [13.5, 12.5, 12.5, 13.5], "texture": "#0"},
+				"south": {"uv": [13.5, 13.5, 16, 12.5], "texture": "#0"},
+				"up": {"uv": [13.5, 12.5, 16, 13.5], "texture": "#0"},
+				"down": {"uv": [13.5, 12.5, 16, 13.5], "texture": "#0"}
+			}
+		},
+		{
+			"from": [16, -1, -2],
+			"to": [18, 1, 0],
+			"rotation": {"angle": 0, "axis": "y", "origin": [17, -1, -1]},
+			"faces": {
+				"north": {"uv": [8, 1.5, 9, 2.5], "texture": "#0"},
+				"east": {"uv": [9, 0, 8, 1], "rotation": 90, "texture": "#0"},
+				"south": {"uv": [8, 1.5, 9, 2.5], "texture": "#0"},
+				"west": {"uv": [8, 1, 9, 0], "rotation": 90, "texture": "#0"},
+				"up": {"uv": [8, 0, 9, 1], "texture": "#0"},
+				"down": {"uv": [9, 1, 8, 0], "texture": "#0"}
+			}
+		},
+		{
+			"from": [-2, -1, -2],
+			"to": [0, 1, 0],
+			"rotation": {"angle": 0, "axis": "y", "origin": [-1, -1, -1]},
+			"faces": {
+				"north": {"uv": [8, 1.5, 9, 2.5], "texture": "#0"},
+				"east": {"uv": [9, 0, 8, 1], "rotation": 90, "texture": "#0"},
+				"south": {"uv": [8, 1.5, 9, 2.5], "texture": "#0"},
+				"west": {"uv": [8, 1, 9, 0], "rotation": 90, "texture": "#0"},
+				"up": {"uv": [8, 0, 9, 1], "texture": "#0"},
+				"down": {"uv": [9, 1, 8, 0], "texture": "#0"}
+			}
+		}
+	],
+	"display": {
+		"thirdperson_righthand": {
+			"rotation": [75, 45, 0],
+			"translation": [0, 2.5, 0],
+			"scale": [0.375, 0.375, 0.375]
+		},
+		"thirdperson_lefthand": {
+			"rotation": [75, 45, 0],
+			"translation": [0, 2.5, 0],
+			"scale": [0.375, 0.375, 0.375]
+		},
+		"firstperson_righthand": {
+			"rotation": [0, 45, 0],
+			"scale": [0.4, 0.4, 0.4]
+		},
+		"firstperson_lefthand": {
+			"rotation": [0, -135, 0],
+			"scale": [0.4, 0.4, 0.4]
+		},
+		"ground": {
+			"translation": [0, 3, 0],
+			"scale": [0.25, 0.25, 0.25]
+		},
+		"gui": {
+			"rotation": [30, -135, 0],
+			"translation": [0, -1.25, 0],
+			"scale": [0.4, 0.4, 0.4]
+		},
+		"head": {
+			"translation": [0, 12.25, 0],
+			"scale": [0.75, 0.75, 0.75]
+		},
+		"fixed": {
+			"translation": [0, 0, -0.25],
+			"scale": [0.5, 0.5, 0.5]
+		}
+	}
+}

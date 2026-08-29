@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "分压电路",
+  "components": [
+    { "type": "vsource",  "x": 80,  "y": 120, "rotation": 180, "params": { "voltage": 10 } },
+    { "type": "resistor", "x": 260, "y": 120, "rotation": 0, "params": { "resistance": 10000 } },
+    { "type": "resistor", "x": 430, "y": 120, "rotation": 0, "params": { "resistance": 5000 } },
+    { "type": "ground",   "x": 540, "y": 120, "rotation": 0, "params": {} },
+    { "type": "ground",   "x": 30,  "y": 200, "rotation": 0, "params": {} }
+  ],
+  "wires": [
+    [ { "x": 130, "y": 120 }, { "x": 210, "y": 120 } ],
+    [ { "x": 310, "y": 120 }, { "x": 380, "y": 120 } ],
+    [ { "x": 480, "y": 120 }, { "x": 540, "y": 120 } ],
+    [ { "x": 30,  "y": 120 }, { "x": 30,  "y": 200 } ]
+  ],
+  "probes": [ { "x": 380, "y": 120 } ]
+}
