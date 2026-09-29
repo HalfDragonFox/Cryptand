@@ -25,6 +25,14 @@ public class FloatRealMnaSolver implements Solver {
         // 2026-08-20 求解器原生开路支持：stamp 前标记开路电流源
         Solvers.markOpenCurrentSources(net);
         long t0 = System.nanoTime();
+        // ⚠ 2026-08-30 审计 U3 根因：Backward Euler 瞬态元件要求 dt>0——
+        // dt=0（SimClock 首次基准/节流窗口）表示时间未流逝 → 无瞬态可解。
+        // 根因契约：dt<=0 时不执行瞬态求解（状态不变），不打 dt 下限。
+        if (net.dt <= 0) {
+            long tz = System.nanoTime() - t0;
+            return new SolveResult(new double[Math.max(net.nodeCount(), 1)],
+                    true, 0, tz, SolveMode.REAL_DC);
+        }
         int n = net.nodeCount();
         int g = net.groundNode;
 

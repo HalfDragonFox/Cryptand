@@ -23,10 +23,11 @@ package com.hdf.cryptand.neoforge.powergrid.device;
 import com.hdf.cryptand.circuitsimulation.model.Network;
 import com.hdf.cryptand.circuitsimulation.model.composite.CompositeElement;
 import com.hdf.cryptand.circuitsimulation.model.composite.CompositeModel;
-import com.hdf.cryptand.neoforge.powergrid.adapter.BeEventSink;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceBinding;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceThermalStore;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkContext;
+import com.hdf.cryptand.neoforge.powergrid.device.BeEventSink;
+import com.hdf.cryptand.neoforge.powergrid.device.DeviceBinding;
+import com.hdf.cryptand.neoforge.powergrid.device.thermal.ThermalDiffusionConfig;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceThermalStore;
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorNetworkContext;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
@@ -34,7 +35,22 @@ import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
 import java.util.List;
 import java.util.Set;
 
-public interface Assembler {
+public interface Assembler extends com.hdf.cryptand.engine.Assembler {
+
+    /** ⚠ 2026-08-30 引擎分层（common 接口）：特征默认普通设备（平台子类覆写：
+     *  变压器/接口/代理…） */
+    @Override
+    default String feature() { return "normal"; }
+
+    /** ⚠ 2026-08-30 引擎绑定接口（common 仅提供 Binding 类——平台实现）：
+     *  本平台绑定对象 = MC 设备绑定（DeviceBinding/BE）——真实绑定走
+     *  {@link #bind(BlockEntity, CompositeElement, Set)}（MC 交互路径——
+     *  需要 BE/网络）；common 抽象 bind(Binding) 提供空实现（引擎侧接口
+     *  满足；平台绑定在装配方以 MC 路径调用）。 */
+    @Override
+    default void bind(com.hdf.cryptand.engine.Binding binding) {
+        // 平台绑定实现见 bind(BlockEntity,...)（MC 路径）
+    }
 
     /** 是否为【有源设备】（电池/创造源/发电机等）。源组件未加载 → 不组装
      *  （临时不加入运算，防无限功率）。默认无源。 */
@@ -90,6 +106,69 @@ public interface Assembler {
      */
     default void registerParams(BlockPos pos, CompositeModel cm,
                                 List<PhasorNetworkContext.ParamSource> paramSources) {
+    }
+
+    /* ==================== 持久化信息（2026-09-15 用户）====================
+     * 用户："保存时需要组装器记住绑定的数据的相关信息，可以给绑定接口添加信息接口，
+     * 用于保存时返回必要信息。" / "数值可以是通用变量，K 为保存字符串，V 为通用变量。"
+     *
+     * 分工（谁最清楚谁负责）：
+     *   - 组装器是**信息的真正提供者** —— 它建了这个设备的所有模型，也就最清楚
+     *     "重建它需要什么"（节点 id、规格、运行状态……）；
+     *   - {@link com.hdf.cryptand.circuitsimulation.model.ModelLink#persistInfo()}
+     *     是**通道** —— MC 侧的 DeviceBinding 实现它，把调用转给组装器；
+     *   - 编解码器只按【名称(K: String) → 值(V: 通用)】逐条做 KV 搬运，不看内容。
+     *
+     * 默认返回 null = 无可持久化信息（纯被动元件：导线/电阻/电容/电感走各自
+     * 专用编码，不需要这条通道）。
+     */
+
+    /**
+     * 保存：返回重建本设备所需的信息（KV）。
+     * <ul>
+     *   <li>至少应当包含重建模型的【节点 id】（如 {@code a}/{@code b}/{@code x}）——
+     *       恢复时新的 Network 节点数量与顺序由解码器按存档重建，id 仍然有效；</li>
+     *   <li>运行状态（转速/应力/储能……）按需包含；纯规格参数可由恢复时从
+     *       DeviceParamCache 重新读取，不必重复保存。</li>
+     * </ul>
+     */
+    default java.util.Map<String, Object> persistInfo(BlockPos pos, CompositeElement ce) {
+        return null;
+    }
+
+    /**
+     * 恢复：用保存时取走的 KV 重建复合元件（{@link #persistInfo} 的对称操作）。
+     * 返回 null = 本组装器不负责该模型（解码器跳过该元件，其余电路照常恢复）。
+     *
+     * @param pos          设备坐标（由 compositeKey 解析而来："M"+pos 等）
+     * @param compositeKey 原身份锚点（类型码 + 坐标）
+     * @param className    原复合模型的类名（诊断/精确匹配）
+     * @param expanded     展开元件（R/L/C/源，节点 id 指向正在恢复的 Network）
+     * @param info         保存的 KV（名称 → 值）
+     */
+    default CompositeElement restoreFromInfo(BlockPos pos, String compositeKey,
+                                             String className,
+                                             com.hdf.cryptand.circuitsimulation.model
+                                                     .Element[] expanded,
+                                             java.util.Map<String, Object> info) {
+        return null;
+    }
+
+    /**
+     * 引擎消息 → 更新本组装器持有的信息（2026-09-15 用户："主线程发送消息发向网络，
+     * 然后每次网络计算时不是有消息处理吗，处理时先更新到对应组装器即可"）。
+     * <p>
+     * 这是【间接交互】的落点：主线程侧的 BE 只发消息（pos + 纯数据），不直接改引擎
+     * 对象；引擎侧在每轮消息处理阶段把消息先落到【对应设备的组装器】上，组装器更新
+     * 自己持有的信息（参数/开关/目标值……），随后求解阶段只读组装器内的信息。
+     * <p>
+     * 默认空实现（无状态设备不需要）。
+     *
+     * @param pos     设备坐标（消息身份）
+     * @param message 引擎消息（common，纯数据）
+     */
+    default void onMessage(BlockPos pos,
+                           com.hdf.cryptand.engine.EngineMessage message) {
     }
 
     /**

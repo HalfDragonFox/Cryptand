@@ -8,7 +8,7 @@
 package com.hdf.cryptand.neoforge.core.library;
 
 import com.hdf.cryptand.circuitsimulation.lib.SpiceLibrary;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
+import com.hdf.cryptand.neoforge.simulator.config.ConfigCircuit;
 import net.neoforged.fml.loading.FMLPaths;
 
 import java.nio.file.Path;
@@ -25,7 +25,7 @@ public final class ComponentLibrary {
 
     /** 获取（惰性加载；服务端启动后首次访问触发）。配置关闭 → 返回空库。 */
     public static SpiceLibrary get() {
-        if (!ConfigLoad.ENABLE_SPICE_LIBRARY.get()) {
+        if (!ConfigCircuit.ENABLE_SPICE_LIBRARY.get()) {
             return EMPTY;
         }
         SpiceLibrary lib = instance;
@@ -44,7 +44,7 @@ public final class ComponentLibrary {
     /** 重新加载（/cryptand library reload）。配置关闭 → 返回空库。 */
     public static SpiceLibrary reload() {
         synchronized (ComponentLibrary.class) {
-            if (!ConfigLoad.ENABLE_SPICE_LIBRARY.get()) {
+            if (!ConfigCircuit.ENABLE_SPICE_LIBRARY.get()) {
                 instance = EMPTY;
                 return instance;
             }

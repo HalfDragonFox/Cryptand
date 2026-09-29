@@ -21,7 +21,7 @@
 package com.hdf.cryptand.neoforge.create.mixin;
 
 import com.hdf.cryptand.neoforge.core.api.Create.ICryptandGear;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
+import com.hdf.cryptand.neoforge.create.config.ConfigCreate;
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticEffectHandler;
@@ -30,8 +30,8 @@ import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
-import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -94,9 +94,12 @@ public abstract class KineticBlockEntityMixin implements ICryptandGear {
         }
 
         float totalStress = network.calculateStress();
-        double threshold = ConfigLoad.CREATE_STRESS_LIMIT_THRESHOLD.get();
+        double threshold = ConfigCreate.stressLimitThreshold();
 
         if (totalStress >= threshold) {
+            // 留痕：以后"齿轮莫名消失"时，能一眼看出是不是这条应力销毁逻辑干的
+            LOGGER.warn("[GearStress] 应力超阈值 → 销毁齿轮 @ {}  stress={} threshold={}",
+                    kbe.getBlockPos(), totalStress, threshold);
             level.destroyBlock(kbe.getBlockPos(), true);
         }
     }

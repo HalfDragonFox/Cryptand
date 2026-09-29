@@ -14,11 +14,15 @@
 package com.hdf.cryptand.neoforge.powergrid.device.terminal;
 
 import com.hdf.cryptand.circuitsimulation.model.Network;
+import com.hdf.cryptand.neoforge.cee.CeePoseUtil;
 import com.hdf.cryptand.neoforge.cee.CeeTerminalSupport;
+import com.hdf.cryptand.neoforge.simulator.config.ConfigCircuit;
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorNetworkBuilder;
+import com.hdf.cryptand.neoforge.powergrid.state.TerminalRegistry;
+import com.hdf.cryptand.neoforge.powergrid.config.ConfigPowerGrid;
+import com.hdf.cryptand.neoforge.powergrid.device.Assemblers;
 import com.hdf.cryptand.neoforge.railway.catenary.CatenaryHolderBlock;
 import com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkBuilder;
-import com.hdf.cryptand.neoforge.powergrid.device.Assemblers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
@@ -46,7 +50,14 @@ public final class WireTerminals {
 
     public static WireTerminalAssembler byBe(BlockEntity be) {
         if (be == null) return null;
-        return BY_CLASS.get(be.getClass().getSimpleName());
+        // 2026-09-13：自有 BE 子类（XxxBE extends 原版）沿继承链回退，
+        // 否则端子识别 MISS → 设备端子丢失
+        for (String n : com.hdf.cryptand.neoforge.powergrid.device.Assemblers
+                .simpleNames(be.getClass())) {
+            WireTerminalAssembler t = BY_CLASS.get(n);
+            if (t != null) return t;
+        }
+        return null;
     }
 
     // ==================== CEE 自家接线端子（空元件组装器） ====================
@@ -112,8 +123,8 @@ public final class WireTerminals {
     /** 仿真核心总闸（求解/模拟任一开启；否则自管电网不运行） */
     public static boolean coreActive() {
         try {
-            return com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_CRYPTAND_SIMULATION.get()
-                    || com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_CRYPTAND_SOLVER.get();
+            return ConfigCircuit.ENABLE_CRYPTAND_SIMULATION.get()
+                    || ConfigCircuit.ENABLE_CRYPTAND_SOLVER.get();
         } catch (Throwable ignored) {
             return false;
         }
@@ -122,7 +133,7 @@ public final class WireTerminals {
     /** PowerGrid 端子识别启用：PowerGrid 支持开关 && 仿真核心 && PowerGrid mod 已加载 */
     public static boolean powergridActive() {
         try {
-            if (!com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_POWERGRID_SUPPORT.get())
+            if (!ConfigPowerGrid.ENABLE_POWERGRID_SUPPORT.get())
                 return false;
             if (!coreActive()) return false;
             return net.neoforged.fml.ModList.get().isLoaded("powergrid");
@@ -202,7 +213,7 @@ public final class WireTerminals {
     public static Vec3 terminalPosWorld(Level level, BlockPos pos, BlockState state, int term) {
         Vec3 out = terminalLocalWorld(level, pos, state, term);
         if (out == null) return null;
-        return com.hdf.cryptand.neoforge.cee.CeePoseUtil.toWorld(level, pos, out);
+        return CeePoseUtil.toWorld(level, pos, out);
     }
 
     /** 端子【局部世界坐标】（未投影；物理化亚层内 = 亚层坐标。
@@ -256,7 +267,7 @@ public final class WireTerminals {
                         new com.hdf.cryptand.circuitsimulation.model.TerminalElement("B" + pos, t, id);
                 net.addTerminal(te);
                 if (registerTerminals) {
-                    com.hdf.cryptand.neoforge.powergrid.adapter.TerminalRegistry
+                    TerminalRegistry
                             .register(pos, t, te);
                 }
             }

@@ -1,0 +1,17 @@
+{
+  "variants": {
+    "axis=x": {
+      "model": "cryptand:block/peripheral_transmission_key/block",
+      "x": 90,
+      "y": 90
+    },
+    "axis=y": {
+      "model": "cryptand:block/peripheral_transmission_key/block"
+    },
+    "axis=z": {
+      "model": "cryptand:block/peripheral_transmission_key/block",
+      "x": 90,
+      "y": 180
+    }
+  }
+}

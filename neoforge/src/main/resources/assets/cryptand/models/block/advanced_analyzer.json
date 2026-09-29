@@ -1,0 +1,8 @@
+{
+  "parent": "block/orientable",
+  "textures": {
+    "top": "cryptand:block/advanced_analyzer_top",
+    "front": "cryptand:block/advanced_analyzer_front",
+    "side": "cryptand:block/advanced_analyzer_side"
+  }
+}

@@ -72,6 +72,36 @@ public class EnergyModel implements StateDriven {
         if (dyn != null) dyn.setValue(charge); // 同步动力学状态
     }
 
+    /**
+     * 自放电时间常数（s）—— 2026-09-13 用户："停电时电容还能持续输出，并且输出
+     * 停止时能量正常保存并随时间能量慢慢变低"。
+     *
+     * 物理来源：介质损耗 + 漏电流（等效并联漏电阻 R_leak，τ_self = R_leak·C）。
+     * 默认 600s（10 分钟）——电荷按指数缓慢衰减，"慢慢变低"而不是漏光。
+     * ≤0 = 关闭自放电（理想电容，用于对照/测试）。
+     */
+    public volatile double selfDischargeTauS = 600.0;
+
+    /**
+     * 自放电推进（介质损耗/漏电流）：
+     *
+     *     Q(t+dt) = Q(t) · exp(−dt / τ_self)
+     *
+     * 与 DynamicsModel 同形式的解析解 —— 无条件稳定、任意 dt 不振荡、
+     * O(1) 无查表（用户："不要用查表之类的低效兜底的算法"）。
+     * 停电（无外部电流）时由 advanceState 每轮调用 ⇒ 能量自然保存并缓慢衰减。
+     */
+    public void selfDischarge(double dt) {
+        if (!(dt > 0) || !(selfDischargeTauS > 0)) return;
+        if (charge == 0) return;
+        double k = Math.exp(-dt / selfDischargeTauS);
+        if (k >= 1.0) return;
+        double q = charge * k;
+        if (Math.abs(q) < 1e-9) q = 0; // 近零归零（避免永续微电荷）
+        charge = q;
+        if (dyn != null) dyn.setValue(q); // 同步内部动力学状态
+    }
+
     /** 电荷动力学推进（2026-08-20）：一阶松弛，Q 趋向 Q_ss = i·τ。
      *  τ = R·C（内部电阻×电容）；比硬积分更平滑（充放电有惯性）。
      *  返回推进后的电荷。 */
@@ -91,6 +121,10 @@ public class EnergyModel implements StateDriven {
     @Override
     public boolean advanceState(Complex va, Complex vb, double freqHz, double dt, SolveMode mode) {
         if (dyn != null && dt > 0) dyn.advanceState(va, vb, freqHz, dt, mode);
+        // 2026-09-13 用户："停电时电容还能持续输出，输出停止时能量正常保存并随时间
+        // 能量慢慢变低" —— 每轮叠加自放电（解析解；τ 可配，默认 10 分钟）。
+        // 停电时没有 flow() 注入电流，电荷就靠这一步自然衰减 ⇒ 既持续输出又缓慢变低。
+        selfDischarge(dt);
         return false;
     }
 

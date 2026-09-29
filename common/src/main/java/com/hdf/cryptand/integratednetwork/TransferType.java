@@ -25,6 +25,9 @@ public enum TransferType {
     /** 能量（能量管道：FE / EU / J 等） */
     ENERGY,
 
+    /** 气体（化学/气体管道：Mekanism 等，mB） */
+    GAS,
+
     /** 信号（无线电/网络数据：消息、频点强度） */
     SIGNAL;
 

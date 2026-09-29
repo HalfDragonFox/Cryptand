@@ -33,7 +33,9 @@ import com.hdf.cryptand.circuitsimulation.solver.MnaBuilder;
  *
  * 内部节点由调用方分配传入：x（原边漏感后）、y（副边漏感前）、k（约束）。
  * 时域（DC）Backward Euler 已禁用（本元件只走 AC stampComplex），
- * stampReal/commit 仅保留作历史实现，不再使用。
+ * stampReal/commit 是 {@link Element} 接口覆写：时域求解器（RealMnaSolver /
+ * ComplexMnaSolver 的 commit 回调）仍会调用它们，相量路径不经过——保留实现，
+ * 避免时域兜底路径下互感不装配（2026-09-11 审计：非死代码，勿删）。
  *
  * params 序列化：[L1, L2, M, ratio, a1, a2, b1, b2, x, y, k]
  * nodeA()/nodeB() 返回原边绕组端口（满足 Element 两端口约定，实际 4 端口）。
@@ -66,6 +68,13 @@ public class MutualInductor implements Element {
 
     public MutualInductor(int a1, int a2, int b1, int b2, double l1, double l2, double m,
                           double ratio, int x, int y, int k) {
+        // ⚠ 2026-08-30 审计 U7 根因：ratio 非法（0/负/非有限）→ stamp 里
+        // lm=m/n 与 1.0/n 产生 Infinity → MNA 约束行 NaN/奇异。构造时拒绝
+        // 非法输入（fail-fast，非 clamp——静默掩盖会让异常网络"看起来正常"）。
+        if (!Double.isFinite(ratio) || Math.abs(ratio) < 1e-12) {
+            throw new IllegalArgumentException(
+                    "mutual inductor ratio must be finite and non-zero: " + ratio);
+        }
         this.a1 = a1;
         this.a2 = a2;
         this.b1 = b1;

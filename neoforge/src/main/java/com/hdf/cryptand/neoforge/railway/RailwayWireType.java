@@ -2,7 +2,7 @@ package com.hdf.cryptand.neoforge.railway;
 
 import com.hdf.cryptand.neoforge.cee.CeeTerminalSupport;
 import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireRegistry;
-import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireType;
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
 
 /**
  * 接触网导线类型注册（2026-08-22 "CEE 全自管电路"）。

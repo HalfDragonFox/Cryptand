@@ -33,4 +33,21 @@ public interface StateDriven {
      * @return true = 状态变化导致电学参数变化（下轮需重解）
      */
     boolean advanceState(Complex va, Complex vb, double freqHz, double dt, SolveMode mode);
+
+    /**
+     * 重置状态（网络重建/世界切换/设备复位时调用）。
+     *
+     * 2026-09-13 用户："统一基类只需要保留计算接口即可" —— 因此本接口【只有】
+     * 计算（advanceState）与重置（reset）两项：不塞类型标识、不塞处理器注册、
+     * 不塞序列化。
+     *   · 不塞 type()：推进按【数量分块并行】，不做类型分发，类型无关紧要；
+     *   · 不塞 snapshot()/restore()：状态量少且是标量（温度/电荷/转速），
+     *     持久化留在各 *Store 层（DeviceThermalStore / CapacitorStateStore /
+     *     MotorStateStore），那里已经解决"主线程读 / 引擎写"的线程边界；
+     *     塞进基类反而要给每个模型开一条序列化路径。
+     * 默认空实现 —— 已有实现类（ThermalModel/DynamicsModel/EnergyModel）
+     * 各自已有 reset()，会自然覆写本方法。
+     */
+    default void reset() {
+    }
 }

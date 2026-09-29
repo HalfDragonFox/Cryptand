@@ -12,11 +12,12 @@
  */
 package com.hdf.cryptand.neoforge.cee;
 
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceParamCache;
+import com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.phys.Vec3;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -144,7 +145,7 @@ public final class CeeDeviceSupport {
                 BlockPos pos = BlockPos.of(l);
                 CeeParams cp = readParams(level, pos);
                 if (cp != null) {
-                    com.hdf.cryptand.neoforge.powergrid.adapter.DeviceParamCache
+                    DeviceParamCache
                             .putCee(pos, cp);
                 }
             }
@@ -163,7 +164,7 @@ public final class CeeDeviceSupport {
         try {
             int[] ab = firstTwo(arr);
             // 端子元件补全（CEE 多端子：connector 2 / triple 3 / quad 4...）
-            com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals
+            WireTerminals
                     .assembleTerminals(pos, Math.max(1, cp.terminalCount()), arr,
                             engine, registerTerminals);
             if (ab == null) return; // 无已接线引擎节点（悬空设备：端子补全已建节点，跳过元件）

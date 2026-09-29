@@ -1,0 +1,51 @@
+// ===== LDLib2 真客户端 UI 测试（UITest）接入（Cryptand，2026-09-15）=====
+// 这是"无人值守 UI 验证"的接入点：真客户端 + 场景脚本 + 自动截图 + report.json。
+// 仅在传 -PldTest=<场景名|group:组名> 时激活；平时完全惰性，不影响正常构建与发布。
+//
+// 用法：
+//   gradlew :neoforge:runClient -PldTest=cryptand_soc_download     # 跑单个场景
+//   gradlew :neoforge:runClient -PldTest=group:cryptand            # 跑一组
+//   gradlew :neoforge:verifyUiTest -PldTest=...                    # 校验报告（runClient 会自动串上）
+// 产物：neoforge/build/ldlib2-uitest/report.json + screenshots/
+//
+// 可选参数：-PldTestExclude= -PldTestGuiScale=2 -PldTestWindow=1280x720
+//          -PldTestInputMode=SYNTHETIC -PldTestWatchdogSec=90 -PldTestKeepOpen
+def ldTestOut = layout.buildDirectory.dir('ldlib2-uitest').get().asFile.absolutePath
+
+tasks.matching { it.name == 'runClient' }.configureEach { t ->
+    if (project.hasProperty('ldTest')) {
+        t.systemProperty 'ldlib2.uitest.run', project.property('ldTest')
+        t.systemProperty 'ldlib2.uitest.out', ldTestOut
+        t.systemProperty 'ldlib2.uitest.exclude', project.findProperty('ldTestExclude') ?: ''
+        t.systemProperty 'ldlib2.uitest.guiScale', project.findProperty('ldTestGuiScale') ?: '2'
+        // 留空 = 正常最大化窗口；只有需要固定尺寸截图时才指定 WIDTHxHEIGHT
+        t.systemProperty 'ldlib2.uitest.window', project.findProperty('ldTestWindow') ?: ''
+        t.systemProperty 'ldlib2.uitest.inputMode', project.findProperty('ldTestInputMode') ?: 'SYNTHETIC'
+        t.systemProperty 'ldlib2.uitest.watchdogSec', project.findProperty('ldTestWatchdogSec') ?: '90'
+        if (project.hasProperty('ldTestKeepOpen')) {
+            t.systemProperty 'ldlib2.uitest.keepOpen', 'true'
+        }
+    }
+}
+
+tasks.register('verifyUiTest') {
+    group = 'verification'
+    description = '校验 LDLib2 UITest 报告：有失败就构建失败（仅 -PldTest 时执行）'
+    onlyIf { project.hasProperty('ldTest') }
+    doLast {
+        def reportFile = new File(ldTestOut, 'report.json')
+        if (!reportFile.exists()) {
+            throw new GradleException("LDLib2 UITest：未找到报告 ${reportFile} —— 场景是否真的执行了？")
+        }
+        def report = new groovy.json.JsonSlurper().parse(reportFile)
+        logger.lifecycle("LDLib2 UITest：${report.totals.passed}/${report.totals.scenarios} 场景通过，" +
+                "${report.totals.checks - report.totals.checksFailed}/${report.totals.checks} 断言通过")
+        if (report.status != 'PASS') {
+            throw new GradleException("LDLib2 UITest ${report.status} —— 完整报告：${reportFile}")
+        }
+    }
+}
+
+tasks.matching { it.name == 'runClient' }.configureEach { t ->
+    t.finalizedBy 'verifyUiTest'
+}

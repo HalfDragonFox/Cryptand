@@ -16,10 +16,10 @@ package com.hdf.cryptand.neoforge.powergrid.device.gauge;
 
 import com.hdf.cryptand.circuitsimulation.model.Network;
 import com.hdf.cryptand.circuitsimulation.model.elements.Resistor;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache;
-import com.hdf.cryptand.neoforge.powergrid.device.SourceCacheAssembler;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCache;
 import com.hdf.cryptand.neoforge.powergrid.device.DeviceWire;
-import com.hdf.cryptand.neoforge.powergrid.device.Assembler;
+import com.hdf.cryptand.neoforge.powergrid.device.cache.SourceCacheAssembler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
@@ -31,7 +31,7 @@ public final class GaugeAssembler implements SourceCacheAssembler {
 
     /** 按表计类型选内部 wire 字段（电流表 wire / 电压表 connection / 功率表 series） */
     private static String fieldOf(BlockEntity be) {
-        String cls = be.getClass().getSimpleName();
+        String cls = com.hdf.cryptand.neoforge.powergrid.device.Assemblers.beKey(be);
         if ("CurrentGaugeBlockEntity".equals(cls)) return "wire";
         if ("VoltageGaugeBlockEntity".equals(cls)) return "connection";
         return "series";
@@ -67,7 +67,7 @@ public final class GaugeAssembler implements SourceCacheAssembler {
     @Override
     public void stamp(BlockEntity be, int a, int b, Network net) {
         if (be == null || a == b) return;
-        String cls = be.getClass().getSimpleName();
+        String cls = com.hdf.cryptand.neoforge.powergrid.device.Assemblers.beKey(be);
         String field;
         if ("CurrentGaugeBlockEntity".equals(cls)) {
             field = "wire";       // 安培表：低阻串联（实测 0.05Ω）
@@ -82,7 +82,7 @@ public final class GaugeAssembler implements SourceCacheAssembler {
         } else {
             // 内部 wire 未就绪（buildCircuit 未跑/字段异常）→ 不建模并告警，
             // 暴露真实问题（不用兜底电阻掩盖，否则求解电路与实际不符 → 虚假电流）。
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+            CryptandNeoForge.WAF_LOGGER.warn(
                     "[Gauge] {} internal wire '{}' unavailable (r<=0), gauge not modeled",
                     cls, field);
         }

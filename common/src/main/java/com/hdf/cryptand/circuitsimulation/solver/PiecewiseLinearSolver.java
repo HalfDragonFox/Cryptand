@@ -66,6 +66,12 @@ public class PiecewiseLinearSolver implements Solver {
                 double dd = vn[i].sub(v[i]).abs();
                 if (dd > d) d = dd;
             }
+            // ⚠ 2026-08-30 审计 M7：发散保护——工作点振荡/爆炸时 d 巨大，
+            // 继续迭代只污染 v；超物理上限 → 终止标记未收敛。
+            if (d > 1e12) {
+                converged = false;
+                break;
+            }
             v = vn;
             if (d < TOL) {
                 converged = true;

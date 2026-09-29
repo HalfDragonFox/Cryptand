@@ -52,8 +52,10 @@ public final class TransportOperation implements Runnable {
     @Override
     public void run() {
         try {
-            // 整合 + 执行循环：直到缓冲清空（执行期间新消息继续进入缓冲）
-            while (true) {
+            // 整合 + 执行循环：直到缓冲清空（执行期间新消息继续进入缓冲）。
+            // ★ 2026-09 P2-7 根因修复：管理类关闭（世界卸载）→ 停止消费剩余
+            //   缓冲，立即归还所有权（onComplete 因 closing 直接移除记录）。
+            while (!manager.isClosing()) {
                 TransportOpMerged merged = mergeBuffer();
                 if (merged.isEmpty()) break;
                 runs.incrementAndGet();
@@ -74,6 +76,10 @@ public final class TransportOperation implements Runnable {
         TransportOpRequest r;
         while ((r = buffer.poll()) != null) {
             switch (r.kind) {
+                case SPLIT_MERGE -> {
+                    m.splitMerge = true;
+                    m.splitMergeData = r.data;
+                }
                 case DESTROY -> {
                     m.destroy = true;
                     m.destroyData = r.data;
@@ -82,7 +88,15 @@ public final class TransportOperation implements Runnable {
                     m.topology = true;
                     m.topologyData = r.data;
                 }
+                case REPORT -> {
+                    m.report = true;
+                    m.reportData = r.data;
+                }
                 case ROUTE -> m.route = true;
+                case TRANSFER -> {
+                    m.transfer = true;
+                    m.transferData = r.data;
+                }
                 case TICK -> {
                     m.tick = true;
                     m.tickFrames += (r.data instanceof Integer i) ? Math.max(0, i) : 1;
@@ -94,6 +108,12 @@ public final class TransportOperation implements Runnable {
 
     /** 按优先级执行整合后的操作：拓扑破坏 &gt; 拓扑变更 &gt; 路由 &gt; 推进流动。 */
     private void executeMerged(TransportOpMerged m) {
+        if (m.splitMerge) {
+            try {
+                executor.executeSplitMerge(key, m.splitMergeData);
+            } catch (Throwable ignored) {
+            }
+        }
         if (m.destroy) {
             try {
                 executor.executeDestroy(key, m.destroyData);
@@ -106,9 +126,21 @@ public final class TransportOperation implements Runnable {
             } catch (Throwable ignored) {
             }
         }
+        if (m.report) {
+            try {
+                executor.executeReport(key, m.reportData);
+            } catch (Throwable ignored) {
+            }
+        }
         if (m.route) {
             try {
                 executor.executeRoute(key, null);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (m.transfer) {
+            try {
+                executor.executeTransfer(key, m.transferData);
             } catch (Throwable ignored) {
             }
         }

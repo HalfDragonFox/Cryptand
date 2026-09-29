@@ -1,6 +1,30 @@
+buildscript {
+    dependencies {
+        // ASM：patchSableJar 清空官方 @Mod 类构造（禁官方初始化）用。
+        classpath 'org.ow2.asm:asm:9.7'
+        classpath 'org.ow2.asm:asm-tree:9.7'
+    }
+}
+
 plugins {
     id "com.github.johnrengelman.shadow" version "8.1.1"
+    // Scala 编译链（2026-09-27：真彩屏「全套移植 OC 屏幕代码（Scala）」的前提）。
+    // 只用【编译期】：运行期的 scala 运行时由 OC 的语言提供者 kotori_scala 提供（见 dependencies）。
+    id "scala"
 }
+
+// Scala 版本事实来源（不是记忆，逐条可查）：
+//   ① 运行期那份 scala 运行时 = runtimeOnly 的 Scalable Cat's Force
+//      （curse.maven:scalable-cats-force-320926:5527136 = 3.3.3-build-15）jar 根部的
+//      `library.properties`：version.number=2.13.12、maven.version.number=2.13.12；
+//      该 jar 的 MANIFEST：Automatic-Module-Name=kotori_scala、FMLModType=LIBRARY、
+//      Implementation-Version=3.3.3-build-15 —— 即 OC 的 modLoader="kotori_scala" /
+//      loaderVersion="[3.3.3-build-15,4)"（OC jar 的 META-INF/neoforge.mods.toml）所依赖的那个提供者。
+//   ② OC 自己也这么定：`.ai_cache/OpenComputers/gradle.properties:9`
+//      「Scala 2.13.12 is bundled in the OpenComputers JAR」+
+//      `.ai_cache/OpenComputers/build.gradle:227` embedded("org.scala-lang:scala-library:2.13.12")。
+// ⇒ 我们编译期必须用同一份 2.13.12，否则 Scala 生成的字节码会引用运行期不存在的符号。
+def scalaLibraryVersion = rootProject.findProperty('scala_version') ?: '2.13.12'
 
 repositories {
     // LDLib2 官方发布仓库（snapshots 持续构建）
@@ -19,44 +43,12 @@ architectury {
     neoForge()
 }
 
-// 把 common 的 engine + storage + circuit 源码复制到 neoforge 的 build 目录并
-// 作为 main 源码编译，使 cryptand mod 自身包含这些类。这样 dev 运行无需改
-// loom.mods / MOD_CLASSES（改 MOD_CLASSES 会触发 create Registrate "unused
-// register callbacks" 导致启动崩溃）。
-// ⚠ storage 必须一并复制（2026-08-14）：SQLite 的 SqliteStore/AsyncOp 等类在
-// Loom dev 运行时不在 classpath（implementation project(:common) 只编译可见），
-// 运行时 NoClassDefFoundError → SQLite 从未打开 → 导线无法存档/恢复。
-// ⚠ circuit 必须一并复制（2026-08-15）：网表数据库 NetlistDatabase/SimulationIdGen
-// 等类同样在 Loom dev 运行时不在 classpath，不复制 → NoClassDefFoundError。
-// （2026-08-17：EDA 电路查看器 com.hdf.cryptand.neoforge.eda 已整体迁到 neoforge 源集，
-//  不再从 common 复制。）
-// ⚠ integratednetwork 必须一并复制（2026-08-26）：集成网络核心
-//  com.hdf.cryptand.integratednetwork（common 纯 Java 独立核心，与电路仿真平级），
-//  neoforge 平台层引用其类 → 运行时必须存在。
-def engineSourceCopy = tasks.register('copyEngineSource') {
-    def srcDirs = [
-            project(':common').file('src/main/java/com/hdf/cryptand/circuitsimulation'),
-            project(':common').file('src/main/java/com/hdf/cryptand/core/storage'),
-            project(':common').file('src/main/java/com/hdf/cryptand/integratednetwork')
-    ]
-    // 关键：用 inputs.dir（递归快照目录内容）而非 inputs.files(目录)。
-    // inputs.files(目录) 的 up-to-date 检查只跟踪目录本身、不递归内容 →
-    // 改 common 源码后 copyEngineSource 误判 UP-TO-DATE → engineSrc 一直旧代码
-    // （2026-08-14 服务器实证：SqliteStore 修复未生效的元凶）。
-    srcDirs.each { inputs.dir(it) }
-    def target = layout.buildDirectory.dir('engineSrc')
-    outputs.dir(target)
-    doLast {
-        def dest = target.get().asFile
-        delete dest
-        for (src in srcDirs) {
-            copy {
-                from src
-                into dest
-            }
-        }
-    }
-}
+// ⚠ 2026-08-30 改回原本加载模式：删除 engineSrc（copyEngineSource）方案——
+// common 以【库】直接进运行 classpath（见 configurations 的 developmentNeoForge/
+// runtimeClasspath += common sourceSet output），不再复制源码进 neoforge 编译。
+// 原因：engineSrc 增量/缓存反复误判 UP-TO-DATE → 运行缺 common 类
+//（NativeMath/ReadWriteGate/WirePoint ClassNotFound）；库 classpath 不经
+// MOD_CLASSES → 不触发 Registrate "unused register callbacks" 崩溃，安全。
 
 configurations {
     common
@@ -68,18 +60,41 @@ configurations {
     ldlib2Official
 }
 
+dependencies {
+    // ⚠ 2026-08-30 改回原本加载模式：common jar（库，非 mod）直接进
+    // developmentNeoForge（NeoForge dev 运行 classpath）——dev 运行时 common 类
+    // 从 common jar 加载，不经 engineSrc 复制（消除 engineSrc 增量/缓存误判
+    // 导致的运行缺类）。用 jar 文件而非输出目录（Architectury Transformer 只
+    // 按 jar 打开 classpath 条目）。runtimeClasspath 为解析配置不可声明依赖。
+    developmentNeoForge files(project(':common').jar.archiveFile.get().asFile)
+}
+
+// ⚠ 2026-08-30 改回原本加载模式：common 编译输出（库）进运行 classpath——
+// 见下方 configurations 块（developmentNeoForge/runtimeClasspath += common output）。
+// 库 classpath 不触发 Registrate MOD_CLASSES 检查（安全）；common 改码后
+// runClient 自动用最新输出（无 engineSrc UP-TO-DATE 误判问题）。
+
+// ⚠ 2026-09-01：官方 sable 系（dev.ryanhcode.sable）——不再做空壳，改为【加载官方
+    //   完整 jar 但禁止其运行】：
+    //   - 编译期引入官方 sable jar（类签名完整，供核心/兼容包引用、供其他 mod mixin 不崩）；
+    //   - 运行时用 patchSableJar 产出的【纯类库版】（去掉 neoforge.mods.toml → 不注册为
+    //     mod、不初始化 @Mod("sable")；去掉 sable*.mixins.json → ban 官方全部 mixins；
+    //     去掉 META-INF/services/ → 不触发官方平台实现；去掉 jarjar/ → 不带官方 rapier/veil natives）。
+    //   - modId="sable" 仍由 CryptandSableMod（空壳 @Mod("sable")）提供，满足依赖检查。
+    //   - 仍全局排除坐标依赖：第三方 mod 传递带 sable 官方 jar 会与我们的纯类库版重复，
+    //     必须排除；官方 jar 仅按本地 files 显式引入（不受 exclude 影响）。
+configurations.all {
+    exclude group: 'dev.ryanhcode.sable'
+}
+
 sourceSets {
     main {
         java {
-            srcDir(engineSourceCopy)
+            // （engineSrc 方案已删除——2026-08-30 改回 common 库加载）
         }
         // 编译期使用官方 LDLib2 jar（运行时用 patched 版）
         compileClasspath += configurations.ldlib2Official
     }
-}
-
-tasks.named('compileJava') {
-    dependsOn engineSourceCopy
 }
 
 loom {
@@ -91,6 +106,15 @@ loom {
 
     runs {
         client {
+            // 自动进入最新测试世界（2026-09-01 调试物理化用；可改为 false）
+            if (project.hasProperty("quickPlayWorld")) {
+                programArgs "--quickPlaySingleplayer", project.getProperty("quickPlayWorld")
+            }
+            // 键盘/组件调用诊断（2026-09-25）：gradlew :neoforge:runClient -PdebugCalls
+            //   ⇒ -Dcryptand.debug.calls=1：逐次打印键盘信号形态与注入字节（默认静默）
+            if (project.hasProperty("debugCalls")) {
+                vmArg "-Dcryptand.debug.calls=1"
+            }
         }
         server {
         }
@@ -146,6 +170,121 @@ def patchLdlib2Task = tasks.register('patchLdlib2Jar') {
     }
 }
 
+// ⚠ 2026-09-01：官方 sable jar → 惰性 mod（patchSableJar）。
+//   官方 jar（libs/sable-neoforge-1.21.1-2.0.3.jar）作为【可识别 mod】加载，但【不运行】：
+//   - 【保留】重写后的 neoforge.mods.toml（modId="sable" + neoforge/minecraft 依赖）→
+//     FML 把 sable 识别为已安装 mod → 官方 805 类进入 ModuleLayer（其他 mod 对
+//     dev.ryanhcode.sable.* 的 mixin / 依赖检查 / 惰性引用全部可见，不再 ClassNotFound）。
+//   - 【保留】官方 @Mod 类（SableNeoForge / SableNeoForgeClient），但用 ASM 清空其
+//     <init> 构造方法体（仅保留 super）→ FML 实例化 mod 成功，但官方初始化
+//     （Sable.init/SableClient.init → TCP/tags/blockProperty/ForceGroups/DLL）全部不执行。
+//   - 【剔除】sable*.mixins.json（ban 官方全部 mixins）、META-INF/services/（不触发官方
+//     platform 实现）、META-INF/jarjar/（不带官方 rapier DLL/companion/veil）。
+//   - 官方主类不初始化 + 无 services + 无 jarjar → 官方"可见不可动"。
+//   - 不随 cryptand jar 分发：仅作为 dev 运行时 classpath mod（生产如需分发走 jar-in-jar）。
+def patchSableJar = tasks.register('patchSableJar') {
+    def src = file('libs/sable-neoforge-1.21.1-2.0.3.jar')
+    def dst = layout.buildDirectory.file("sable-patched/sable-neoforge-1.21.1-2.0.3-classes.jar")
+    inputs.file(src)
+    outputs.file(dst)
+    doLast {
+        if (!src.exists()) {
+            throw new GradleException("patchSableJar 失败: 缺少 " + src)
+        }
+        def out = dst.get().asFile
+        out.parentFile.mkdirs()
+
+        // 重写后的 mods.toml（只保留 mod 识别 + required 依赖；去掉官方 mixins/services/jarjar 引用）
+        def newModsToml = '''modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "All Rights Reserved"
+
+[[mods]]
+modId = "sable"
+version = "2.0.3"
+displayName = "Sable"
+authors = "RyanHCode"
+description = \'\'\'Interactive moving block structures with physics.\'\'\'
+logoFile = "icon.png"
+logoBlur = false
+
+[[dependencies.sable]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21.1.228,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.sable]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.1]"
+ordering = "NONE"
+side = "BOTH"
+'''.stripIndent()
+
+        def zis = new java.util.zip.ZipInputStream(new java.io.FileInputStream(src))
+        def zos = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(out))
+        zis.withCloseable {
+            zos.withCloseable {
+                java.util.zip.ZipEntry entry
+                while ((entry = zis.nextEntry) != null) {
+                    // 剔除：官方 mixins / services / jarjar（natives）。
+                    // services/ 必须剔除：否则 ServiceLoader 会实例化官方 platform 实现
+                    // （SableLoaderPlatformImpl 等）→ 触发官方运行（禁）。官方接口的服务
+                    // 实现由 cryptand 在 cryptandsable_compat 提供（见 META-INF/services/）。
+                    if (entry.name == 'sable.mixins.json' || entry.name == 'sable-neoforge.mixins.json') continue
+                    if (entry.name.startsWith('META-INF/services/')) continue
+                    if (entry.name.startsWith('META-INF/jarjar/')) continue
+                    // mods.toml → 重写版本（FML 识别 mod，但不引用官方 mixins/services）
+                    if (entry.name == 'META-INF/neoforge.mods.toml') {
+                        zos.putNextEntry(new java.util.zip.ZipEntry(entry))
+                        zos.write(newModsToml.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                        zos.closeEntry()
+                        continue
+                    }
+                    // 官方 @Mod 类 → ASM 清空 <init> 构造（禁初始化）
+                    if (entry.name == 'dev/ryanhcode/sable/neoforge/SableNeoForge.class'
+                            || entry.name == 'dev/ryanhcode/sable/neoforge/SableNeoForgeClient.class') {
+                        def bytes = zis.readAllBytes()
+                        def cn = new org.objectweb.asm.tree.ClassNode()
+                        new org.objectweb.asm.ClassReader(bytes).accept(cn, 0)
+                        cn.methods.each { m ->
+                            if (m.name == '<init>') {
+                                m.instructions.clear()
+                                m.instructions.add(new org.objectweb.asm.tree.VarInsnNode(org.objectweb.asm.Opcodes.ALOAD, 0))
+                                m.instructions.add(new org.objectweb.asm.tree.MethodInsnNode(org.objectweb.asm.Opcodes.INVOKESPECIAL, cn.superName, '<init>', '()V', false))
+                                m.instructions.add(new org.objectweb.asm.tree.InsnNode(org.objectweb.asm.Opcodes.RETURN))
+                                m.maxLocals = 0
+                                m.maxStack = 0
+                                m.localVariables = null
+                                m.tryCatchBlocks = null
+                            }
+                        }
+                        def cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS)
+                        cn.accept(cw)
+                        def ne = new java.util.zip.ZipEntry(entry)
+                        zos.putNextEntry(ne)
+                        zos.write(cw.toByteArray())
+                        zos.closeEntry()
+                        continue
+                    }
+                    def ne2 = new java.util.zip.ZipEntry(entry)
+                    zos.putNextEntry(ne2)
+                    def buf = new byte[8192]
+                    int n
+                    while ((n = zis.read(buf)) > 0) { zos.write(buf, 0, n) }
+                    zos.closeEntry()
+                }
+            }
+        }
+        if (!out.exists()) {
+            throw new GradleException("patchSableJar 失败: 未生成 " + out)
+        }
+        logger.lifecycle("Sable inert-mod jar (mods.toml kept, @Mod init cleared): {}", out)
+    }
+}
+
 
 
 
@@ -172,29 +311,32 @@ dependencies {
 
     implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") { transitive = false }
     implementation("net.createmod.ponder:ponder-neoforge:${ponder_version}+mc${minecraft_version}")
-    // Create: Aeronautics（可选联动：compileOnly 编译期 API，不强制玩家安装；
-    // 运行时由 AeronauticsCompat 检测 mod 存在，未装不注入 mixin / 不启用功能）
-    compileOnly("maven.modrinth:create-aeronautics:${rootProject.aeronautics_version}") {
-        transitive = false
-    }
-    // CEE（Create-Electro-Energetics，2026-08-22 测试运行 / 端子互通对接）。
-    // compileOnly = 编译期可见（未来精确 API）；runtimeOnly = dev 运行加载 CEE。
+
+    // dev运行时Mod
+    compileOnly("maven.modrinth:create-aeronautics:${rootProject.aeronautics_version}") { transitive = false }
+    // ★ 2026-09-14：simulated（航空学的真实内容承载者）。
+    //   create-aeronautics 的 jar 是 jarjar 聚合包（仅 10 个条目），真正代码在这三个嵌套 jar 里；
+    //   本行用从中抽取出来的 simulated jar，只为【编译期】引用它的 ExtraKinetics API
+    //   （外设模拟传动器按用户要求"最好使用原版的"——复用原版双 KBE 传动机制）。
+    //   可选依赖：运行时没有 simulated 时，相关方块由 aeronautics 子包门控不注册。
+    compileOnly(files('libs/dev.simulated_team.simulated.simulated-neoforge-1.21.1-1.3.0.jar'))
     compileOnly("maven.modrinth:create-electro-energetics:1.21.1-1.1.1") { transitive = false }
+    // ⚠ SableCompanion API：编译期引用 companion-1.6.0 jar（libs/，从 CEE 内嵌 jarjar 抽取）。
+    //   不打进 cryptand jar（否则与 CEE 内嵌的 sablecompanion mod 形成 JPMS split package）。
+    //   运行时 companion 接口由 CEE 内嵌的 sablecompanion mod 提供，CryptandSableCompanion
+    //   （ServiceLoader 最高优先级）实现之。生产打包 phase 用 jarJar 内嵌同版本以自举。
+    compileOnly(files('libs/sable-companion-common-1.21.1-1.6.0.jar'))
     runtimeOnly("maven.modrinth:create-electro-energetics:1.21.1-1.1.1") { transitive = false }
-    // ⚠ 2026-08-22 启动崩溃修复（v2 实证）：依赖树确认【offroad 直接依赖
-    //   cc.tweaked:cc-tweaked-1.21.1-forge:1.115.1】（sable 不带）。CC 1.115.1 的
-    //   mixin 与 MC 1.21.1 不兼容（V3818_3Mixin/DataFixersMixin → Pre-bootstrap 崩）。
-    //   CC 的 maven group 是【cc.tweaked】（旧版才是 org.squiddev）→ 之前
-    //   exclude org.squiddev 无效。改为排除 cc.tweaked（sable/offroad 都排，
-    //   防未来版本变动）；sable/offroad 的 computercraft 兼容 mixin 无 target 仅
-    //   警告不崩。
-    runtimeOnly("dev.ryanhcode.sable:sable-neoforge-1.21.1:2.0.3") { exclude group: "cc.tweaked" }
+    // ⚠ 2026-09-06（三轮：官方原版完整加载，patchSableJar 退役）：
+    //   官方 sable 以【原版】作为可识别 mod 完整运行（官方 @Mod 构造/mixins/services/
+    //   jarjar 全保留）——三模式语义：core 关（模式 C）官方正常使用；core 开（模式 A）
+    //   CryptandSable 经 cryptandsable_compat 运行期禁跑官方（mixin 空化官方 loadLibrary、
+    //   tickPipelinePhysics cancel 等）。官方 jar 编译可见，【绝不随 cryptand jar 分发】。
+    compileOnly(files('libs/sable-neoforge-1.21.1-2.0.5.jar'))
+    runtimeOnly(files('libs/sable-neoforge-1.21.1-2.0.5.jar'))
     runtimeOnly("dev.ryanhcode.offroad:offroad-neoforge-1.21.1:1.3.0") { exclude group: "cc.tweaked" }
     runtimeOnly("maven.modrinth:create-aeronautics:${rootProject.aeronautics_version}") { transitive = false }
-    // ⚠ CEE 还依赖 simulated（dev.simulated_team.simulated）；若 dev 跑 CEE 报缺
-    // simulated，把 CEE 及其依赖（simulated/offroad/sable/aeronautics）放到
-    // neoforge/run/mods 由 NeoForge 加载即可（仓库坐标随发布源调整）。
-    // JEI（LDlib 集成依赖，2026-08-22 版本不足报错修复：19.21.0.247 → 19.21.2.313）
+    runtimeOnly("curse.maven:sable-schematic-tool-1526951:8606655")
     compileOnly("mezz.jei:jei-${minecraft_version}-neoforge-api:${rootProject.jei_version}")
     runtimeOnly("mezz.jei:jei-${minecraft_version}-neoforge:${rootProject.jei_version}")
     // LDLib2 - UI 框架（2026-08-13 用户要求：UI 全部使用 ldlib，现代化）
@@ -216,6 +358,60 @@ dependencies {
     implementation("dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}")
     implementation("com.tterrag.registrate:Registrate:${registrate_version}")
     implementation("curse.maven:power-grid-${rootProject.powergrid_version}")
+    // ⚠ VEIL（转接包）：官方 sable 2.0.3 通过 jarJar 内嵌 veil-neoforge-4.1.4，
+    //   PhysicsBlockPropertyTypes 的字段类型引用 foundry.veil.platform.registry，
+    //   下游 aeronautics/simulated/offroad 字节码按该类型 getstatic。沿用官方
+    //   sable 内嵌的 veil jar（从官方 sable jar META-INF/jarjar 提取到 libs/）。
+    //   用【本地文件依赖】（像 sable-companion 一样），避免 Loom 将其识别为 mod
+    //   依赖而平铺展开（会覆盖自建 mods.toml）。编译期 + dev 运行 classpath 提供；
+    //   生产分发用 processResources 把 veil jar 作为 jar-in-jar 随空壳一起打包。
+    compileOnly(files('libs/veil-neoforge-1.21.1-4.1.4.jar'))
+    // ★ 2026-09-06（三轮）：veil 不再 runtimeOnly 自持——官方 sable 2.0.5 原版经 jarjar
+    //   内嵌 veil 4.3.2（运行时随官方 mod 加载）；重复自持会双 veil（modId 冲突）。
+    //   编译期签名仍用 libs/veil（4.1.4→4.3.2 API 兼容，运行期以官方 jarjar 4.3.2 为准）。
+    // Pipez（2026-08-29 用户要求添加，dev 环境依赖，仅 neoforge）。
+    // compileOnly = 编译期 API 可见（未来管道互通集成预留）；runtimeOnly = dev 运行加载。
+    compileOnly("curse.maven:pipez-443900:${rootProject.pipez_version}") { transitive = false }
+    runtimeOnly("curse.maven:pipez-443900:${rootProject.pipez_version}") { transitive = false }
+    // Mekanism 官方组件套件（2026-08-29 用户要求 dev 环境加上；Pipez 气体管道需
+    //   mekanism.api.chemical；CurseForge maven 文件 ID：10.7.19.85 批次；
+    //   runtimeOnly = dev 运行加载）。主 jar + Generators + Additions + Tools。
+    runtimeOnly("curse.maven:mekanism-268560:${rootProject.mekanism_version}") { transitive = false }
+    runtimeOnly("curse.maven:mekanism-generators-268566:${rootProject.mekanism_generators_version}") { transitive = false }
+    runtimeOnly("curse.maven:mekanism-additions-345425:${rootProject.mekanism_additions_version}") { transitive = false }
+    runtimeOnly("curse.maven:mekanism-tools-268567:${rootProject.mekanism_tools_version}") { transitive = false }
+//    runtimeOnly("curse.maven:distant-horizons-508933:8943824") { transitive = false }
+    // OpenComputers Rebooted（2026-09-16 用户要求：dev 环境加载，作为 OC 参考实现，
+    //   对照其「机箱 / 处理器(CPU/APU) / 内存条 / 硬盘 / 扩展卡」部件体系与外观）
+    //   CurseForge projectId 1634364, fileId 8721690。
+    //   runtimeOnly = 只进 dev 运行 classpath，不随模组分发；
+    //   若将来要在代码里引用 OC API（写兼容/联动），改成：
+    //     compileOnly("curse.maven:opencomputers-rebooted-1634364:8721690") { transitive = false }
+    //     runtimeOnly("curse.maven:opencomputers-rebooted-1634364:8721690") { transitive = false }
+    // ★ 必需前置：Scalable Cat's Force（CurseForge projectId 320926, fileId 5527136 =
+    //   ScalableCatsForce-NeoForge-3.3.3-build-15-with-library，1.21/1.21.1 NeoForge）。
+    //   它提供语言加载器 **kotori_scala**（Scala 运行库已随该 jar 内自带，无需额外依赖）。
+    //   缺它 → FML 直接拒绝加载 OC 并导致游戏启动失败：
+    //     "needs language provider kotori_scala:3.3.3-build-15 or above, and below 4 to load"
+    runtimeOnly("curse.maven:scalable-cats-force-320926:5527136") { transitive = false }
+    // ⚠ 2026-09-16：**1.9.4-3 有 bug 会崩**（鼠标悬停 OC 物品即崩）：
+    //     NoSuchMethodError: TooltipFlag.shouldDisplayAllInformation()   ← 更高版本 MC 的 API
+    //     at li.cil.oc.util.Tooltip$.showExtendedTooltip(Tooltip.scala:16)
+    //   已实测：**只有 1.9.4-3 引用了该缺失方法**；1.9.4-2 / 1.9.4 / 1.9.3-5 都没有（二进制常量池核对）。
+    //   因此改用 1.9.4-2（fileId 8614366，与 1.9.4-3 同代但无此缺陷）。
+    // ⚠ 2026-09-16（P1）：我们的 opencomputers 子包**引用 OC 的 API**（li.cil.oc.api.*：
+    //   DriverItem / Processor / Memory / Architecture / ExecutionResult / Driver.add）
+    //   ⇒ 必须 compileOnly，否则编译期看不到 OC 类；runtimeOnly 保留（dev 运行加载）。
+    compileOnly("curse.maven:opencomputers-rebooted-1634364:8614366") { transitive = false }
+    runtimeOnly("curse.maven:opencomputers-rebooted-1634364:8614366") { transitive = false }
+    // ===== Scala 编译链（2026-09-27：移植 OC 屏幕代码）=====
+    // 只编译期需要 scala-library（证据见文件顶部 scalaLibraryVersion 注释）：
+    // 运行期 scala.* 由 OC 的语言提供者 kotori_scala（Scalable Cat's Force，FMLModType=LIBRARY）
+    // 唯一提供，全模组可见。这里必须 compileOnly —— 写成 implementation 会打进第二份
+    // scala 运行时（OC 自己就为这个坑做了 RelocateScalaJar，见
+    // .ai_cache/OpenComputers/buildSrc/.../RelocateScalaJar.java:20-23）。
+    compileOnly("org.scala-lang:scala-library:${scalaLibraryVersion}")
+
     // 第三方库：需要随模组一起分发，使用 implementation + include
     implementation(include('org.apache.commons:commons-math3:3.6.1'))
     implementation(include('com.github.FiguraMC.luaj:luaj-jse:3.0.8-figura'))
@@ -232,6 +428,11 @@ dependencies {
     implementation(include("org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"))
     shadowCommon "org.xerial:sqlite-jdbc:${rootProject.sqlite_version}"
 
+    // COM 串口对接库（2026-09-08）：include = jar-in-jar 随 mod 分发（dev 运行经 common 传递依赖）
+    implementation(include("com.fazecast:jSerialComm:${rootProject.serialcomm_version}"))
+    // 方向盘 DirectInput8 后端（2026-09-08）：JNA 随 mod 分发
+    implementation(include("net.java.dev.jna:jna:${rootProject.jna_version}"))
+
     // 重新声明 shadowCommon 并排除 Fabric (确保传递依赖中无 fabric-loader)
     shadowCommon(project(path: ":common", configuration: "transformProductionNeoForge")) {
         exclude group: 'net.fabricmc'
@@ -239,8 +440,64 @@ dependencies {
     }
 }
 
+// Scala 编译选项：照 OC build.gradle:490-493（同一 MC 1.21.1 / NeoForge 版本的实际配置）——
+// 只调 fork 内存与线程栈，不动 -target（OC 同样不动）。
+// Java 编译需要看见 Scala 编译产物（本项目两者输出到同一目录 classes/java/main）：
+//   compileScala 用 -sourcepath 解析 Java 源码，Java 侧则要把该输出目录加进 classpath，
+//   否则 javac 只在源集内部寻找 ⇒ 找不到 Scala 类（SocPairingData → truescreen...Screen）。
+tasks.withType(ScalaCompile).configureEach {
+    scalaCompileOptions.forkOptions.memoryMaximumSize = '2g'
+    scalaCompileOptions.forkOptions.jvmArgs = ['-Xss4m']
+    // 打破 Java↔Scala 循环依赖（2026-09-29）：
+    //   compileJava 需要 Scala 类（SocPairingData → truescreen...Screen.scala）
+    //   compileScala 需要 Java 类（TrueScreenRegistrarImpl → TrueScreenRegistrar.java）
+    //   ⇒ 让 Scala 编译器直接解析未编译的 Java 源码，不必等 classes/java/main。
+    scalaCompileOptions.additionalParameters += ['-sourcepath', file('src/main/java').absolutePath]
+}
+
+// ⚠⚠ dev 运行期的类可见性（2026-09-27 真机取证后的**根因修复**）
+//
+// 故障：真机 runClient 日志
+//   java.lang.ClassNotFoundException: com.hdf.cryptand.neoforge.truescreen.TrueScreenContent
+//   （SocContent.registerTrueScreenContent）
+//   ⇒ 移植件一个方块/BE/组件都没注册（创造栏没有、place 出来是 air、组件表 screen=0）。
+//
+// 取证（全部离线、可复核）：
+//   ① 生成物 `.idea/runConfigurations/Minecraft_Client___neoforge__neoforge.xml` 的
+//      `MOD_CLASSES`（Architectury Transformer 的 mod 类路径）只有
+//        build/resources/main ; build/classes/java/main ; out/production/classes ; out/production/resources
+//      ——**没有** build/classes/scala/main；该文件生成于 2026-07-02（本模块加 scala 源集之前），
+//      之后没再生成过（改源码/编译都不会重写它）。
+//   ② init-script 实探：`sourceSets.main.output.classesDirs` = [classes/java/main,
+//      **classes/scala/main**]（Gradle 自己知道两个目录），`build/loom-cache/argFiles/runClient`
+//      的 -classpath 也带上了 scala 目录 ⇒ 出问题的只是 MOD_CLASSES 那份按"一个 mod 一个类目录"
+//      老布局写死的**生成物**。
+//   ③ 生产 jar（remapJar）本来就含 scala 类（jar 任务取 sourceSets.main.output）⇒ 只 dev 受影响。
+//
+// 措施：让 scalac **直接产出到 java 类目录**，于是任何形态的 MOD_CLASSES（旧生成的、IDE 重新同步
+//   的、Gradle 自己跑的）都能看见全部 mod 类。**不依赖 IDE 重新同步**，也不需要任何"运行期兜底"。
+//   ⚠ 代价：compileJava 与 compileScala 共用输出目录 ⇒ Gradle 会关闭这两个任务的执行优化
+//   （日志里出现一条 "overlapping outputs" warning），产物与功能不受影响。
+tasks.named('compileScala') {
+    destinationDirectory.set(project.layout.buildDirectory.dir('classes/java/main'))
+}
+
 processResources {
     inputs.property "version", project.version
+
+    // 固件字节（common 是**单一来源**）：director 把 common 的 soc 目录纳入本任务的输入/输出。
+    // ⚠ 为什么必须在这里（2026-09-25 踩了两次）：
+    //   ① Architectury 自己的 processResources 只在"它自己重跑"时才把 common 的资源带过来，
+    //      而 common 侧改固件**不会**改变它的输入 ⇒ 它长期 UP-TO-DATE，
+    //      build/resources/main 里的 cryptand-os.bin 就永远停在第一次那份
+    //      （实测：客户端拿 9/17 的旧固件跑了整整一轮，期间所有固件修复都没生效）；
+    //   ② 反过来手动删掉那份过期副本 ⇒ 客户端直接"Boot 镜像缺失 ⇒ 保持关机"。
+    //   放在这里的好处：依赖关系是**显式**的（runClient 本来就依赖 processResources），
+    //   不再需要一个额外的 Sync 任务去挂 finalizedBy（那样 gradle 会报隐式依赖校验错误，
+    //   runClient 直接 FAILED —— 实测）。
+    from(project(':common').file('src/main/resources/assets/cryptand/soc')) {
+        into 'assets/cryptand/soc'
+    }
 
     filesMatching("META-INF/neoforge.mods.toml") {
         expand "version": project.version
@@ -255,9 +512,100 @@ shadowJar {
     archiveClassifier = "dev-shadow"
 }
 
+// ⚠ VEIL jar-in-jar：把 veil jar 作为【二进制条目】写入产物 META-INF/jarjar/（随空壳
+//   @Mod("sable") 一起分发；不用 sable 时整体不装 veil）。Gradle `from(jar)` 会自动把
+//   归档解压，因此这里用 ZipOutputStream 手动注入单个字节条目（参考官方 sable 内嵌 veil）。
+//   注意：Loom remap 步骤会重写 metadata.json 并丢弃 veil 条目，因此本任务必须
+//   挂在 remapJar【之后】运行，注入 veil.jar 并【合并】metadata.json 里的 veil 声明。
+def injectVeilJarTask = tasks.register('injectVeilJar') {
+    inputs.file('libs/veil-neoforge-1.21.1-4.1.4.jar')
+    dependsOn remapJar
+    def veilJarPath = 'META-INF/jarjar/veil-neoforge-1.21.1-4.1.4.jar'
+    def metadataPath = 'META-INF/jarjar/metadata.json'
+    def veilEntryJson = '''{
+        "identifier": { "group": "foundry.veil", "artifact": "veil-neoforge-1.21.1" },
+        "version": { "range": "[4.1.4,)", "artifactVersion": "4.1.4" },
+        "path": "META-INF/jarjar/veil-neoforge-1.21.1-4.1.4.jar",
+        "isObfuscated": false
+    }'''
+    doLast {
+        def veilSrc = file('libs/veil-neoforge-1.21.1-4.1.4.jar')
+        def veilBytes = veilSrc.bytes
+        def target = remapJar.archiveFile.get().asFile
+        def tmp = new File(target.parentFile, target.name + '.tmp')
+
+        // read whole jar into memory (rebuild with veil + merged metadata)
+        def zis = new java.util.zip.ZipInputStream(new java.io.FileInputStream(target))
+        boolean veilPresent = false
+        String metadata = null
+        byte[] metadataBytes = null
+        java.util.LinkedHashMap<String, byte[]> entries = new java.util.LinkedHashMap<>()
+        // ordered rebuild; skip veil jar & metadata first, re-add after
+        def toAdd = []
+        def veilEntryData = null
+        try {
+            java.util.zip.ZipEntry e
+            while ((e = zis.nextEntry) != null) {
+                if (e.name == veilJarPath) { veilPresent = true; veilEntryData = zis.readAllBytes(); continue }
+                def data = zis.readAllBytes()
+                entries.put(e.name, data)
+                if (e.name == metadataPath) { metadata = new String(data, java.nio.charset.StandardCharsets.UTF_8) }
+            }
+        } finally { zis.close() }
+
+        // merge veil entry into metadata json
+        final boolean vs = veilPresent
+        final String veilEntryStr = veilEntryJson
+        String newMetadata = null
+        if (metadata == null) {
+            newMetadata = '{"jars": [' + veilEntryStr + ']}'
+        } else {
+            def merged = new groovy.json.JsonBuilder()
+            def obj = new groovy.json.JsonSlurper().parseText(metadata)
+            def jars = obj instanceof Map && obj.jars != null ? obj.jars : []
+            def existing = jars.find { it.path instanceof String && it.path == veilJarPath }
+            if (existing == null) {
+                jars.add(new groovy.json.JsonSlurper().parseText(veilEntryStr))
+            }
+            newMetadata = new groovy.json.JsonBuilder(obj).toString().replace('::', ':')
+            // JsonBuilder escapes nothing here; ensure veil path entry retained
+        }
+        metadataBytes = newMetadata.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+
+        def zos = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(tmp))
+        try {
+            for (def entry : entries.entrySet()) {
+                if (entry.key == metadataPath) continue // re-add later
+                zos.putNextEntry(new java.util.zip.ZipEntry(entry.key))
+                zos.write(entry.value)
+                zos.closeEntry()
+            }
+            // veil jar (binary)
+            zos.putNextEntry(new java.util.zip.ZipEntry(veilJarPath))
+            zos.write(veilBytes)
+            zos.closeEntry()
+            // merged metadata
+            zos.putNextEntry(new java.util.zip.ZipEntry(metadataPath))
+            zos.write(metadataBytes)
+            zos.closeEntry()
+        } finally { zos.close() }
+
+        if (!target.delete()) { throw new RuntimeException('cannot delete ' + target) }
+        if (!tmp.renameTo(target)) { throw new RuntimeException('cannot rename to ' + target) }
+        logger.lifecycle('Injected veil jar-in-jar + metadata into {}', target)
+    }
+}
+
 remapJar {
     inputFile.set(shadowJar.archiveFile)
     dependsOn shadowJar
+}
+
+// ⚠ VEIL 内置：产物 jar 必须内嵌 veil（用户"随sable空包一起运行，内置"）。
+//   injectVeilJar 挂到 remapJar 后完成注入（remap 会丢 veil 条目，故注入须在 remap 之后）；
+//   build/jar 自动依赖 remapJar → 保证产物最终 jar 含 veil jar-in-jar。
+build {
+    dependsOn injectVeilJar
 }
 
 sourcesJar {
@@ -283,4 +631,123 @@ publishing {
     repositories {
         // Add repositories to publish to here.
     }
+}
+
+// LDLib2 真客户端 UI 测试（无人值守）：仅在 -PldTest 时激活，见 gradle/ldlib2-uitest.gradle
+apply from: rootProject.file('gradle/ldlib2-uitest.gradle')
+
+// ===== 固件资源必须进运行时 classpath（2026-09-18 真机踩过）=====
+// common 的 resources（assets/cryptand/soc/*.bin）是"测试与游戏共用的同一份字节"，
+// 但 :common:processResources **不会**被 runClient 自动触发 ⇒ 迁完资源忘了跑它，
+// 真机就会报 "Cryptand Boot 镜像缺失"（而且看起来像固件没编译）。
+tasks.matching { it.name == 'processResources' }.configureEach {
+    dependsOn ':common:processResources'
+}
+
+// ⚠ 固件字节由 processResources 直接纳入（见上面的 from(...)）—— 这里只保留"先跑 common"的依赖。
+//   曾经的写法是额外一个 Sync 任务 + finalizedBy，结果 runClient 消费它产出的目录却没声明依赖，
+//   gradle 8 的校验直接判错：runClient FAILED（2026-09-25 实测）。
+// 真彩屏「驱动方闸门」离线闸门（2026-09-27，P0 崩服修复的回归网）：
+//   复现 OC 原版显卡经 Network.send 读/写真彩屏（含 bind(reset)）⇒ 必须不抛、不崩、写无效。
+//   ./gradlew :neoforge:runDriveGateTest
+tasks.register('runDriveGateTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the true-screen drive gate self test (vanilla GPU refused without throwing; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.neoforge.opencomputers.TrueScreenDriveGate'
+    workingDir = rootProject.projectDir
+}
+
+// 图像帧报文编解码闸门（2026-09-28，纯数据 + Scala 标准库；不依赖 MC）：
+//   ./gradlew :neoforge:runScreenFrameCodecTest
+// 钉住"往返一致 + 坏数据明确报错"；采样/合成的数学在 :common:runScreenFrameSyncTest 里。
+tasks.register('runScreenFrameCodecTest', JavaExec) {
+    group = 'verification'
+    description = 'Run screen image frame codec round-trip self test (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.neoforge.truescreen.network.ScreenFrameCodec'
+    workingDir = rootProject.projectDir
+}
+
+// 处理器实况闸门（2026-09-29，用户定案「所有模块/架构信息在 CPU 里」）：
+//   ./gradlew :neoforge:runChipFactsTest
+// 钉住：族→档位唯一映射、MHz↔预算互逆、族间模块集差异（PCIE 只有 SOC/CPU）、
+//       ISA 回查缺省必须 null、成品芯片规格 NBT 往返（族/ISA/模块/配置连接）。
+tasks.register('runChipFactsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run processor facts self test (chip carries family/ISA/modules/links; no MC)'
+    // 注意：common 的 classes 放在最前 —— 客户端运行时会占用 common/build/libs/*.jar，
+    // remapJar 写不进去时运行时 classpath 会落后于源码（闸门读到旧类）。测试任务先吃源码产物。
+    classpath = project.files(rootProject.file('common/build/classes/java/main'),
+            sourceSets.main.runtimeClasspath)
+    mainClass = 'com.hdf.cryptand.neoforge.soc.content.ProcessorFacts'
+    workingDir = rootProject.projectDir
+}
+
+// 硬件链路闸门（2026-09-29，端口身份落盘修复的回归网）：
+//   ./gradlew :neoforge:runLinkGateTest
+// 钉住：设备接口点表与支持接口列表一致、端口端点收敛成单协议（同色才可连）、
+//       落盘行带端口身份（NBT 往返不丢 port）、重放后按「坐标+设备+端口」精确命中。
+tasks.register('runLinkGateTest', JavaExec) {
+    group = 'verification'
+    description = 'Run hardware link gate self test (device ports + port identity persistence; no MC)'
+    classpath = project.files(rootProject.file('common/build/classes/java/main'),
+            sourceSets.main.runtimeClasspath)
+    mainClass = 'com.hdf.cryptand.neoforge.soc.link.LinkGateSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// ==================== 动态 UI 插件示例打包（2026-09-29） ====================
+// 把 excode/uiplugin-demo 编成**独立 jar**（不含 mod 类），供运行期加载：
+//   gradlew :neoforge:uiPluginDemoJar   ⇒ build/uiplugin-demo/demo-ui.jar
+// 游戏内：/cryptand aiauto ldlib plugin load <该 jar 路径>  ⇒  open demo-ui
+// 这就是「动态原型 → 静态固化」里的动态阶段：改完 reload 即生效，稳定后把源码搬进 mod 树。
+def uiPluginDemoSrc = rootProject.file('excode/uiplugin-demo/src/main/java')
+def uiPluginDemoRes = rootProject.file('excode/uiplugin-demo/src/main/resources')
+
+tasks.register('compileUiPluginDemo', JavaCompile) {
+    group = 'build'
+    description = 'Compile the demo dynamic UI plugin against the mod classes'
+    source = fileTree(uiPluginDemoSrc)
+    classpath = sourceSets.main.compileClasspath + sourceSets.main.output
+    destinationDirectory = layout.buildDirectory.dir('uiplugin-demo/classes')
+    options.encoding = 'UTF-8'
+    dependsOn tasks.named('classes')
+}
+
+tasks.register('uiPluginDemoJar', Jar) {
+    group = 'build'
+    description = 'Package the demo dynamic UI plugin into a loadable jar'
+    dependsOn tasks.named('compileUiPluginDemo')
+    archiveFileName = 'demo-ui.jar'
+    destinationDirectory = layout.buildDirectory.dir('uiplugin-demo')
+    from layout.buildDirectory.dir('uiplugin-demo/classes')
+    from uiPluginDemoRes
+}
+
+// ==================== 动态样式插件示例打包（2026-09-29，第二个具体核心） ====================
+// 把 excode/styleplugin-demo 编成**独立 jar**（不含 mod 类）：
+//   gradlew :neoforge:stylePluginDemoJar   ⇒ build/uiplugin-demo/demo-style.jar
+// 游戏内：/cryptand aiauto ldlib plugin load <该 jar 路径>  ⇒  plugin list 里应出现 core=style 的条目
+def stylePluginDemoSrc = rootProject.file('excode/styleplugin-demo/src/main/java')
+def stylePluginDemoRes = rootProject.file('excode/styleplugin-demo/src/main/resources')
+
+tasks.register('compileStylePluginDemo', JavaCompile) {
+    group = 'build'
+    description = 'Compile the demo dynamic style plugin against the mod classes'
+    source = fileTree(stylePluginDemoSrc)
+    classpath = sourceSets.main.compileClasspath + sourceSets.main.output
+    destinationDirectory = layout.buildDirectory.dir('uiplugin-demo/style-classes')
+    options.encoding = 'UTF-8'
+    dependsOn tasks.named('classes')
+}
+
+tasks.register('stylePluginDemoJar', Jar) {
+    group = 'build'
+    description = 'Package the demo dynamic style plugin into a loadable jar'
+    dependsOn tasks.named('compileStylePluginDemo')
+    archiveFileName = 'demo-style.jar'
+    destinationDirectory = layout.buildDirectory.dir('uiplugin-demo')
+    from layout.buildDirectory.dir('uiplugin-demo/style-classes')
+    from stylePluginDemoRes
 }

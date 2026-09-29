@@ -1,32 +1,23 @@
 package com.hdf.cryptand.neoforge.powergrid.persistence;
 
 import com.hdf.cryptand.circuitsimulation.db.NetlistDatabase;
-import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.AssemblerRecord;
-import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.NetlistSnapshot;
-import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.NetworkRecord;
-import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.RendererRecord;
-import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.WireRecord;
+import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.*;
 import com.hdf.cryptand.circuitsimulation.netgraph.WireEdge;
 import com.hdf.cryptand.circuitsimulation.netgraph.WireNetwork;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
-import com.hdf.cryptand.neoforge.powergrid.adapter.VirtualDevice;
-import com.hdf.cryptand.neoforge.powergrid.adapter.VirtualDeviceStore;
-import com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.simulator.config.ConfigCircuit;
+import com.hdf.cryptand.neoforge.powergrid.state.VirtualDevice;
+import com.hdf.cryptand.neoforge.powergrid.state.VirtualDeviceStore;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
 import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireRegistry;
-import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireType;
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.storage.LevelResource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.AbstractMap;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * 仿真电路文件夹（2026-08-15 用户架构：世界目录下注册"仿真电路"文件夹）。
@@ -154,7 +145,7 @@ public final class SimulationCircuitFolder {
                     } catch (Throwable ignored) {
                     }
                 }
-                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                CryptandNeoForge.WAF_LOGGER.info(
                         "[SimFolder] migrated {} -> {}", legacy.getFileName(),
                         currentFile.getFileName());
             }
@@ -168,10 +159,16 @@ public final class SimulationCircuitFolder {
             // 网络求解缓存（2026-08-15 用户要求：缓存机制只在世界加载/保存时
             // 交互 SQLite）——加载时一次性读入内存，之后游戏期间纯内存命中。
             NetworkCacheManager.loadAll(db);
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            // 2026-09-15 用户："BE 侧走 Sqlite 保存即可，接管 NBT 保存，保存组装器等信息"
+            //  —— 设备信息（组装器给出的 KV：电机转速/应力、绕组内部节点 id……）
+            //  与网络缓存同库同生命周期：加载时一次性读回内存，之后游戏期间纯内存。
+            int dev = DeviceInfoStore.loadAll(db, dimOf(level));
+            CryptandNeoForge.WAF_LOGGER.info(
+                    "[SimFolder] device info rows loaded = {}", dev);
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[SimFolder] opened {} ({}) restored {}", dir, NAME_ZH, db.stats());
         } catch (Throwable t) {
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.error(
+            CryptandNeoForge.WAF_LOGGER.error(
                     "[SimFolder] onWorldLoad failed", t);
             close();
         }
@@ -187,8 +184,11 @@ public final class SimulationCircuitFolder {
             NetlistSnapshot snap = collectSnapshot(currentLevel);
             db.saveSnapshotAsync(snap);
             NetworkCacheManager.saveAllAsync(db);
+            // 设备信息：先问组装器采集（绑定 → 组装器），再异步落库
+            DeviceInfoStore.collect(dimOf(currentLevel));
+            DeviceInfoStore.saveAsync(db);
         } catch (Throwable t) {
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+            CryptandNeoForge.WAF_LOGGER.warn(
                     "[SimFolder] onWorldSave failed", t);
         }
     }
@@ -201,12 +201,24 @@ public final class SimulationCircuitFolder {
                 NetlistSnapshot snap = collectSnapshot(currentLevel);
                 db.saveSnapshotSync(snap);
             } catch (Throwable t) {
-                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+                CryptandNeoForge.WAF_LOGGER.warn(
                         "[SimFolder] onWorldUnload snapshot save failed", t);
             }
             NetworkCacheManager.saveAllSync(db);
+            // 设备信息：退出存档【同步】保存（立即落盘，再关库）
+            DeviceInfoStore.collect(dimOf(currentLevel));
+            DeviceInfoStore.saveSync(db);
         }
         close();
+    }
+
+    /** 维度 id（设备信息表主键的一部分；取不到则空串，不阻断保存） */
+    private static String dimOf(ServerLevel level) {
+        try {
+            return level == null ? "" : level.dimension().location().toString();
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     /** 关闭（flush 落盘 + 关库 + 清状态）。幂等。 */
@@ -218,11 +230,12 @@ public final class SimulationCircuitFolder {
         ASSEMBLER_IDS.clear();
         WIRE_IDS.clear();
         NetworkCacheManager.clear();
+        DeviceInfoStore.clear();
         if (db != null) {
             try {
                 db.close();
             } catch (Throwable t) {
-                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+                CryptandNeoForge.WAF_LOGGER.warn(
                         "[SimFolder] close failed", t);
             }
         }
@@ -293,7 +306,7 @@ public final class SimulationCircuitFolder {
         if (db == null) return NetlistSnapshot.empty();
         String dim = level != null
                 ? level.dimension().location().toString() : null;
-        double freq = Math.max(0, ConfigLoad.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
+        double freq = Math.max(0, ConfigCircuit.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
 
         List<NetworkRecord> nets = new ArrayList<>();
         List<WireRecord> wires = new ArrayList<>();

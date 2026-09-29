@@ -1,0 +1,7 @@
+{
+ "credit": "Appearance adapted from OpenComputers (textures are CC0 1.0 public domain). Cryptand soc part.",
+ "parent": "item/generated",
+ "textures": {
+  "layer0": "cryptand:item/oc/redstonecard1"
+ }
+}

@@ -1,0 +1,78 @@
+/* ===== Cryptand SoC 主题（LSS）=====
+ * 依据 .ai_cache/ldlib2_research/03-ui-design-playbook.md 配方：
+ *   - 颜色是 #AARRGGBB（A 在前，最容易写反）
+ *   - 面板根必须定义 .panel_bg（换主题时靠它找背景）
+ *   - 圆角卡片 = sdf(#AARRGGBB, 圆角[, 描边宽, 描边色])
+ *   - 只改局部部件时用内部类名 __组件_部件__
+ * 改完文件在游戏内 F3+T 即可热重载。
+ */
+
+/* ---- 面板根：深色圆角卡片 ---- */
+.panel_bg {
+  background: sdf(#F21B1E24, 6);
+  padding-all: 6;
+  gap-all: 5;
+}
+
+/* ---- 分组框：深一档 + 1px 描边 ---- */
+.card {
+  background: sdf(#B012151A, 4, 1, #33414D5A);
+  padding-all: 5;
+  gap-all: 4;
+}
+
+/* ---- 标题 ---- */
+.panel_title {
+  font: ldlib2:jetbrains_mono_bold;
+  text-color: #FF4FD1C5;
+  text-shadow: false;
+}
+.group_title {
+  font: ldlib2:jetbrains_mono_bold;
+  text-color: #FFF6C177;
+  text-shadow: false;
+  font-size: 8;
+}
+
+/* ---- 文本：深色底一律关阴影，小字必须自适应高度（否则被裁） ---- */
+text, label {
+  text-shadow: false;
+  font: ldlib2:jetbrains_mono_bold;
+}
+.t-dim    { text-color: #FF8B949E; font-size: 8; }
+.t-accent { text-color: #FF4FD1C5; font-size: 8; }
+.t-ok     { text-color: #FF6EE7A8; font-size: 8; }
+.t-warn   { text-color: #FFFBBF24; font-size: 8; }
+.t-err    { text-color: #FFF87171; font-size: 8; }
+
+/* ---- 按钮：teal 科技感 ---- */
+button:host {
+  base-background: sdf(#FF2A6E68, 4, 1, #FF3E8C84);
+  hover-background: sdf(#FF3A8E86, 4, 1, #FF4FD1C5);
+  pressed-background: sdf(#FF1F5B55, 4, 1, #FF4FD1C5);
+  text-color: #FFE6F5F3;
+  height: 16;
+  padding-all: 3;
+}
+
+/* ---- 进度条：高 8，槽底深色 ---- */
+progress-bar:host {
+  height: 8;
+}
+.__progress-bar_bar-container__ {
+  background: sdf(#FF2B3038, 3);
+  padding-all: 0;
+}
+
+/* ---- 下拉/输入：深色 + 描边 ---- */
+selector:host, text-field:host {
+  background: sdf(#FF14171C, 4, 1, #FF3A4653);
+  text-color: #FFE6F5F3;
+  padding-all: 2;
+}
+
+/* ---- 物品槽：跟 LDLib2 标准一致（18×18 + hover 高亮） ---- */
+/* 与内置主题一致的选择器写法（元素名 item-slot + 背景类） */
+item-slot, .item-slot_bg {
+  hover-overlay: sdf(#334FD1C5, 2);
+}

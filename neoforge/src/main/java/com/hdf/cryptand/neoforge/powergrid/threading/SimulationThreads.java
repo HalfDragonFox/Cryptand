@@ -19,9 +19,12 @@
  */
 package com.hdf.cryptand.neoforge.powergrid.threading;
 
+import com.hdf.cryptand.circuitsimulation.compute.ScheduledHandle;
+import com.hdf.cryptand.circuitsimulation.compute.TaskMode;
+import com.hdf.cryptand.circuitsimulation.compute.ThreadDispatchers;
 import com.hdf.cryptand.neoforge.CryptandNeoForge;
-import com.hdf.cryptand.neoforge.powergrid.adapter.FrequencyCurrentPoint;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
+import com.hdf.cryptand.neoforge.simulator.config.ConfigCircuit;
+import com.hdf.cryptand.neoforge.powergrid.measurement.FrequencyCurrentPoint;
 
 import java.util.Collections;
 import java.util.Set;
@@ -52,8 +55,11 @@ public class SimulationThreads implements AutoCloseable {
     private final Object registryLock = new Object();
     private final Object lock = new Object();
     private volatile boolean running;
-    private Thread acThread;
-    private Thread dcThread;
+    // ⚠ 2026-08-30 线程统一：AC 推进不再独立 Cryptand-AC-Compute 线程，改走
+    // 自定义分配核心（ThreadDispatchers）的【固定周期 tick】（schedule 绝对
+    // 时间累加不漂移，回调在 Worker 池虚拟线程执行）。
+    private ScheduledHandle acHandle;
+    private Thread dcThread; // DC 已退役，字段保留兼容
 
     public void registerAcSource(AcSource source) {
         start();
@@ -85,39 +91,53 @@ public class SimulationThreads implements AutoCloseable {
         synchronized (lock) {
             if (running) return;
             running = true;
-            acThread = new Thread(this::acLoop, "Cryptand-AC-Compute");
-            acThread.setDaemon(true);
-            acThread.start();
+            // ⚠ 2026-08-30 线程统一：AC 推进注册到分配核心的【固定周期 tick】
+            //（ThreadDispatchers.schedule：绝对时间累加不漂移、微秒级、可取消；
+            //  回调在统一 Worker 池虚拟线程执行，不再占用独立常驻线程）。
+            double computeHz = Math.max(1, ConfigCircuit.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
+            long periodUs = (long) (1e6 / computeHz);
+            acHandle = ThreadDispatchers.schedule(this::acTick, TaskMode.NORMAL,
+                    0, periodUs);
             // ⚠ DC 线程退役（2026-08-14 完全禁用时域）：电容/电感直流伴生模型
             // （时域 Backward Euler）不再使用，统一相量 + 固定节拍伪时域。
             // dcLoop/DcTask/registerDcTask 定义保留（兼容注册，但不启动线程，
             // 电容/电感行为由相量核心 PhasorNetworkBuilder 建模接管）。
             dcThread = null;
-            CryptandNeoForge.WAF_LOGGER.info("SimulationThreads started (AC only, DC retired)");
+            CryptandNeoForge.WAF_LOGGER.info(
+                    "SimulationThreads started (AC tick via ThreadDispatchers, {}Hz)",
+                    String.format("%.0f", computeHz));
         }
     }
 
-    // ========== AC 线程：推进频率当前点 ==========
+    // ========== AC 周期 tick（分配核心 schedule 固定周期回调） ==========
 
-    private void acLoop() {
-        while (running) {
+    private void acTick() {
+        if (!running) return;
+        try {
             // 统一频率（2026-08-12：移除单独 AC 线程配置，用统一拓扑频率）
-            double computeHz = Math.max(1, ConfigLoad.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
-            long periodNs = (long) (1e9 / computeHz);
-            long startNs = System.nanoTime();
+            double computeHz = Math.max(1, ConfigCircuit.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
             // 快照后迭代，避免与注册并发修改冲突
             AcSource[] snapshot;
             synchronized (registryLock) {
                 snapshot = acSources.toArray(new AcSource[0]);
             }
+            long warnMs = 0;
             for (AcSource source : snapshot) {
                 try {
                     FrequencyCurrentPoint point = source.getCurrentPoint();
                     if (point != null) point.advance(source.getWaveformFrequencyHz(), computeHz);
-                } catch (Throwable ignored) {
+                } catch (Throwable t) {
+                    // ⚠ 2026-08-30 审计 #8：异常不再静默吞——节流告警。
+                    long now = System.currentTimeMillis();
+                    if (now - warnMs > 30000) {
+                        warnMs = now;
+                        CryptandNeoForge.WAF_LOGGER.warn(
+                                "[ACThread] source {} advance failed: {}",
+                                source.getClass().getSimpleName(), t.toString());
+                    }
                 }
             }
-            sleepRemaining(periodNs, startNs);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -126,7 +146,7 @@ public class SimulationThreads implements AutoCloseable {
     private void dcLoop() {
         while (running) {
             // 统一频率（2026-08-12：移除单独 DC 线程配置，用统一拓扑频率）
-            double computeHz = Math.max(1, ConfigLoad.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
+            double computeHz = Math.max(1, ConfigCircuit.CRYPTAND_TOPOLOGY_FREQUENCY_HZ.get());
             long periodNs = (long) (1e9 / computeHz);
             long startNs = System.nanoTime();
             DcTask[] snapshot;
@@ -158,7 +178,8 @@ public class SimulationThreads implements AutoCloseable {
     @Override
     public void close() {
         running = false;
-        if (acThread != null) acThread.interrupt();
+        // ⚠ 2026-08-30 线程统一：取消分配核心的周期 tick 句柄（不再 interrupt 独立线程）
+        if (acHandle != null) acHandle.cancel();
         if (dcThread != null) dcThread.interrupt();
         CryptandNeoForge.WAF_LOGGER.info("SimulationThreads stopped");
     }

@@ -1,14 +1,18 @@
 {
-  "required": true,
-  "package": "com.hdf.cryptand.neoforge.cee.mixin.sable",
-  "plugin": "com.hdf.cryptand.neoforge.cee.mixin.sable.SableMixinPlugin",
+  "required": false,
+  "package": "com.hdf.cryptand.neoforge.sable.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.sable.mixin.SableMixinPlugin",
   "compatibilityLevel": "JAVA_21",
   "minVersion": "0.8",
-  "client": [],
+  "client": [
+    "SableRenderTimingMixin"
+  ],
   "mixins": [
-    "SableAssemblyMoveMixin"
+    "SableAssemblyMoveMixin",
+    "SablePhysicsTickTimingMixin",
+    "SableRapierNativeF64RedirectMixin"
   ],
   "injectors": {
-    "defaultRequire": 1
+    "defaultRequire": 0
   }
 }

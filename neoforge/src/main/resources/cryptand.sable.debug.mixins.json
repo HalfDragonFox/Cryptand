@@ -1,0 +1,16 @@
+{
+  "required": false,
+  "package": "com.hdf.cryptand.neoforge.cryptandsable.debug",
+  "plugin": "com.hdf.cryptand.neoforge.cryptandsable.debug.SableDebugMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "CryptandSubLevelApiClearScanMixin",
+    "OfficialRapierEngineFreezeMixin",
+    "SableServerBridgeHighlightMixin",
+    "WorldChunkUploaderHighlightMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

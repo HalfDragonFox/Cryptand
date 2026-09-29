@@ -21,20 +21,44 @@ public final class NetworkRegistry {
     /** 网络条目：网络对象 + 最近求解结果（volatile，跨线程发布） */
     static final class Entry {
         final Network network;
+        /** ⚠ 2026-08-30 引擎网络上下文（图+组装器+绑定——完整求解——可 null=纯图） */
+        final com.hdf.cryptand.engine.NetworkContext<?> ctx;
         volatile SolveResult result;
         volatile long solvedVersion;
 
         Entry(Network network) {
+            this(network, null);
+        }
+
+        Entry(Network network, com.hdf.cryptand.engine.NetworkContext<?> ctx) {
             this.network = network;
+            this.ctx = ctx;
         }
     }
 
     private final Map<Object, Entry> networks = new ConcurrentHashMap<>();
 
+    /** 全部条目（快照——setSimSpeed 等批量配置用） */
+    public java.util.Collection<Entry> entries() {
+        return networks.values();
+    }
+
     /** 注册网络（已存在则替换，结果缓存清空） */
     public void register(Object key, Network net) {
         if (key == null || net == null) return;
         networks.put(key, new Entry(net));
+    }
+
+    /** ⚠ 2026-08-30 注册引擎网络上下文（工厂创建——图+组装器+绑定——引擎完整求解） */
+    public void registerCtx(Object key, com.hdf.cryptand.engine.NetworkContext<?> ctx) {
+        if (key == null || ctx == null || ctx.network == null) return;
+        networks.put(key, new Entry(ctx.network, ctx));
+    }
+
+    /** 查询引擎网络上下文（未注册/纯图返回 null） */
+    public com.hdf.cryptand.engine.NetworkContext<?> ctx(Object key) {
+        Entry e = networks.get(key);
+        return e == null ? null : e.ctx;
     }
 
     /** 注销网络（返回被移除的网络，不存在返回 null） */

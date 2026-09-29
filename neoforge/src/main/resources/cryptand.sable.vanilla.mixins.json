@@ -1,0 +1,12 @@
+{
+  "required": false,
+  "package": "com.hdf.cryptand.neoforge.cryptandsable_compat.mixin.vanilla",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
+

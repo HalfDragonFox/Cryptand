@@ -34,16 +34,52 @@ public final class TriggerDispatcher implements AutoCloseable {
     private final String name;
     private final Thread thread;
 
-    private TriggerDispatcher(String name) {
+    /** 线程固定选项：true = 任务激活执行只在第一次执行的那条平台线程上进行 */
+    private final boolean pinThread;
+
+    private TriggerDispatcher(String name, boolean pinThread) {
         this.name = name == null || name.isBlank() ? "triggers" : name;
-        this.thread = Thread.ofVirtual()
-                .name(this.name)
-                .start(this::loop);
+        this.pinThread = pinThread;
+        this.thread = pinThread
+                ? Thread.ofPlatform().daemon(true).name(this.name).start(this::loop)
+                : Thread.ofVirtual().name(this.name).start(this::loop);
     }
 
-    /** 创建触发/中断调度器（专属虚拟线程，空闲 park 零占用） */
+    /** 创建触发/中断调度器（默认：专属虚拟线程，空闲 park 零占用） */
     public static TriggerDispatcher create(String name) {
-        return new TriggerDispatcher(name);
+        return new TriggerDispatcher(name, false);
+    }
+
+    /**
+     * 创建触发/中断调度器（带<b>线程固定选项</b>）。
+     *
+     * @param pinThread 用户 2026-09-14 定稿："开启后任务激活执行<b>只在第一次执行的线程中</b>
+     *                  进行执行"。true = 用一条专用平台线程承载（那条线程就是第一次执行所在的
+     *                  线程，此后永远只由它执行，OS 线程恒定）；false = 虚拟线程（默认，
+     *                  park/unpark 之间载体线程可能漂移）。
+     *
+     * <p><b>什么时候必须开启</b>：{@code handler} 里要调用<b>对本机线程有亲和性要求的库</b>
+     * （SDL / 其它 native 库）。虚拟线程对 JVM 是"同一条线程"，对本机库却是换了 OS 线程，
+     * 它的 TLS（如 {@code SDL_GetError}）与 main-thread 断言会全部错乱。
+     * 互斥锁救不了这一类问题 —— 它保证的是"串行"，不是"同一条 OS 线程"。
+     */
+    public static TriggerDispatcher create(String name, boolean pinThread) {
+        return new TriggerDispatcher(name, pinThread);
+    }
+
+    /** 线程固定版（= {@code create(name, true)}），语义见上。 */
+    public static TriggerDispatcher createPlatform(String name) {
+        return new TriggerDispatcher(name, true);
+    }
+
+    /** 是否开启了线程固定（诊断） */
+    public boolean isPinned() {
+        return pinThread;
+    }
+
+    /** 是否支持线程固定（当前实现：开启后即用专用平台线程，恒定 OS 线程） */
+    public static boolean supportsPinning() {
+        return true;
     }
 
     /** 调度器名 */

@@ -66,7 +66,17 @@ public class HarmonicBalanceSolver implements Solver {
                 double omegaH = h * omega;
                 for (Element e : net.elements()) {
                     if (e instanceof NonlinearPhasorElement) continue; // 非线性走右侧源
-                    try { e.stampComplex(m, omegaH); } catch (Throwable ignored) { }
+                    // ⚠ 2026-08-30 审计 M3：谐波分解下 AC 电压源【只贡献基波
+                    // （h=1）】——h=0（DC 分量）AC 源正弦均值 = 0，无直流输出，
+                    // 退化为内阻；否则 stampComplex(0) 全量注入幅值×cosφ/R
+                    // 的虚假 DC 电流 → 节点虚假直流偏置（整流/倍频典型场景）。
+                    try {
+                        if (h == 0 && e instanceof com.hdf.cryptand.circuitsimulation.model.elements.AcVoltageSource av) {
+                            av.stampComplexPassive(m, omegaH);
+                        } else {
+                            e.stampComplex(m, omegaH);
+                        }
+                    } catch (Throwable ignored) { }
                 }
                 if (g >= 0 && g < n) {
                     m.clearRowCol(g);
@@ -98,6 +108,13 @@ public class HarmonicBalanceSolver implements Solver {
                     Vn[h][i] = V[h][i].add(target.sub(V[h][i]).scale(RELAX));
                     maxDelta = Math.max(maxDelta, Vn[h][i].sub(V[h][i]).abs());
                 }
+            }
+            // ⚠ 2026-08-30 审计 M7：发散保护——中间解振荡/爆炸时 maxDelta 巨大，
+            // 继续迭代只会让 V 进一步污染。超过物理上限 → 终止并标记未收敛
+            //（调用方不采用该结果），避免返回发散相量算出的巨大 RMS。
+            if (maxDelta > 1e12) {
+                converged = false;
+                break;
             }
             for (int h = 0; h <= H; h++) V[h] = Vn[h];
             if (maxDelta < TOL) {

@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "cryptand:block/chip_designer" },
+    "facing=east": { "model": "cryptand:block/chip_designer", "y": 90 },
+    "facing=south": { "model": "cryptand:block/chip_designer", "y": 180 },
+    "facing=west": { "model": "cryptand:block/chip_designer", "y": 270 }
+  }
+}

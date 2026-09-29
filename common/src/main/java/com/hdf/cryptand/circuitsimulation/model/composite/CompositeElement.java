@@ -233,6 +233,26 @@ public abstract class CompositeElement implements EnergyState {
     public void bindModel(ModelLink link) { this.modelLink = link; }
 
     /**
+     * 本复合元件的持久化信息（2026-09-15 用户："保存时需要组装器记住绑定的数据
+     * 的相关信息，可以给绑定接口添加信息接口，用于保存时返回必要信息"）。
+     * <p>
+     * 编解码器保存时只需调用本方法 —— 不需要认识每一种复合模型；
+     * 内容由组装器通过 {@link ModelLink#persistInfo()} 提供（组装器最清楚
+     * 自己建了什么、要恢复什么）。
+     * @return 黑盒字符串；null/空 = 无需额外信息
+     */
+    public java.util.Map<String, Object> persistInfo() {
+        ModelLink l = this.modelLink;
+        return l == null ? null : l.persistInfo();
+    }
+
+    /** 恢复：把保存时取走的持久化 KV 交回绑定（无绑定 → 忽略；由组装器回应）。 */
+    public void restorePersistedInfo(java.util.Map<String, Object> info) {
+        ModelLink l = this.modelLink;
+        if (l != null && info != null && !info.isEmpty()) l.restoreInfo(info);
+    }
+
+    /**
      * 实际模型被破坏 → 通知绑定的实际模型侧（adapter 据此定位网络请求重建，
      * 重建后该方块不存在 → 本元件自然不再建模 = 删除此元件）。
      */
@@ -286,6 +306,21 @@ public abstract class CompositeElement implements EnergyState {
         applyBinding();
         if (thermal != null) {
             thermal.advance(lossPower(va, vb, omega), nowNanos);
+            if (thermal.overheated()) {
+                notifyOverheated();
+            } else {
+                overheatNotified = false; // 温度回落 → 可再次通知
+            }
+        }
+    }
+
+    /** ⚠ 2026-08-30 仿真步长推进（用户：统一改回仿真步长 + 倍率——替代真实时间
+     *  nowNanos：快轮次下 realDt 毫秒级 → 温度推进极慢；dt 固定步长（0.05×倍率）
+     *  每轮累积正确）。 */
+    public void update(Complex va, Complex vb, double omega, double dt) {
+        applyBinding();
+        if (thermal != null) {
+            thermal.advanceStep(lossPower(va, vb, omega), dt);
             if (thermal.overheated()) {
                 notifyOverheated();
             } else {

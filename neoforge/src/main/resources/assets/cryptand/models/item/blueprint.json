@@ -1,0 +1,7 @@
+{
+ "credit": "Cryptand chip blueprint item.",
+ "parent": "item/generated",
+ "textures": {
+  "layer0": "cryptand:item/blueprint"
+ }
+}

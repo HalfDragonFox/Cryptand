@@ -22,6 +22,15 @@ public final class RailwayModule {
 
     public static void register(IEventBus bus) {
         RailwayRegistry.register(bus);
+        // ⚠ 2026-08-30 主类子包内容转移（用户：主类凡子包内容全部转移到子包）：
+        // 铁路客户端渲染/事件（原本在主类 client 段直接注册）——现由子包自持。
+        if (net.neoforged.fml.loading.FMLEnvironment.dist
+                == net.neoforged.api.distmarker.Dist.CLIENT) {
+            try {
+                bus.register(com.hdf.cryptand.neoforge.railway.RailwayClient.class);
+            } catch (Throwable ignored) {
+            }
+        }
     }
 
     public static void tick(ServerLevel level) {

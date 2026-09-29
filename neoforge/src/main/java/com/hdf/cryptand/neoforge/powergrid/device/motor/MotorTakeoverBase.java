@@ -1,5 +1,8 @@
 package com.hdf.cryptand.neoforge.powergrid.device.motor;
 
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCurrent;
+import com.hdf.cryptand.neoforge.powergrid.state.MotorStateStore;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
@@ -33,45 +36,225 @@ public final class MotorTakeoverBase {
 
     /* ==================== 反射字段读写（字段存在才操作） ==================== */
 
+    /* ===== 解析结果缓存（2026-09-13 性能）：电机 tick 每 tick 都要读写 avgSpeed/
+     *  generatedSpeed/load 等字段，若每次都沿继承链 getDeclaredField + setAccessible，
+     *  十万级设备时是纯浪费（记忆库"十万级设备零开销"要求）。Field/Method 对象
+     *  本身线程安全（setAccessible 后并发 get/set 没问题），故按 类名#字段名 缓存。===== */
+    private static final Object MISS = new Object();
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object> FIELD_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object> METHOD_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 解析实例字段（沿继承链）；失败 null。结果进 FIELD_CACHE（MISS 表示确认不存在）。 */
+    public static java.lang.reflect.Field findField(Class<?> cls, String name) {
+        if (cls == null || name == null) return null;
+        String key = cls.getName() + '#' + name;
+        Object c = FIELD_CACHE.get(key);
+        if (c == null) {
+            java.lang.reflect.Field f = null;
+            for (Class<?> k = cls; k != null && k != Object.class; k = k.getSuperclass()) {
+                try {
+                    f = k.getDeclaredField(name);
+                    f.setAccessible(true);
+                    break;
+                } catch (NoSuchFieldException ignored) {
+                } catch (Throwable ignored) {
+                    break;
+                }
+            }
+            c = (f == null) ? MISS : (Object) f;
+            FIELD_CACHE.put(key, c);
+        }
+        return c == MISS ? null : (java.lang.reflect.Field) c;
+    }
+
+    /** 解析无参/带参方法（类层次 → 接口层次 → 公开方法）；失败 null。结果进 METHOD_CACHE。 */
+    public static java.lang.reflect.Method findMethodCached(
+            Class<?> cls, String name, Class<?>... params) {
+        if (cls == null || name == null) return null;
+        StringBuilder sb = new StringBuilder(cls.getName()).append('#').append(name);
+        for (Class<?> p : params) sb.append(',').append(p == null ? "null" : p.getName());
+        String key = sb.toString();
+        Object c = METHOD_CACHE.get(key);
+        if (c == null) {
+            java.lang.reflect.Method m = findNumberMethod(cls, name, params);
+            if (m != null) {
+                try {
+                    m.setAccessible(true);
+                } catch (Throwable ignored) {
+                }
+            }
+            c = (m == null) ? MISS : (Object) m;
+            METHOD_CACHE.put(key, c);
+        }
+        return c == MISS ? null : (java.lang.reflect.Method) c;
+    }
+
     /** 反射读实例字段（沿继承链）；失败 null。 */
     public static Object getField(Object obj, String name) {
         if (obj == null) return null;
         try {
-            Class<?> c = obj.getClass();
-            while (c != null && c != Object.class) {
-                try {
-                    java.lang.reflect.Field f = c.getDeclaredField(name);
-                    f.setAccessible(true);
-                    return f.get(obj);
-                } catch (NoSuchFieldException ignored) {
-                    c = c.getSuperclass();
-                } catch (Throwable ignored) {
-                    return null;
-                }
-            }
+            java.lang.reflect.Field f = findField(obj.getClass(), name);
+            return f == null ? null : f.get(obj);
         } catch (Throwable ignored) {
+            return null;
         }
-        return null;
     }
 
     /** 反射写实例字段（沿继承链；字段不存在 → 静默跳过）。 */
     public static void setField(Object obj, String name, Object val) {
         if (obj == null) return;
         try {
-            Class<?> c = obj.getClass();
-            while (c != null && c != Object.class) {
-                try {
-                    java.lang.reflect.Field f = c.getDeclaredField(name);
-                    f.setAccessible(true);
-                    f.set(obj, val);
-                    return;
-                } catch (NoSuchFieldException ignored) {
-                    c = c.getSuperclass();
-                } catch (Throwable ignored) {
-                    return;
-                }
-            }
+            java.lang.reflect.Field f = findField(obj.getClass(), name);
+            if (f != null) f.set(obj, val);
         } catch (Throwable ignored) {
+        }
+    }
+
+    /* ============================================================================
+     * 原版电机语义（2026-09-12 用户："原版三种电机效果和原版类似，即开即停，
+     * 并且输出固定应力以及转速，不会有反馈，总之参考原版代码"）
+     *
+     * 原版 PowerGrid 三种电机的机械输出（ElectricMotor/ConstantSpeed/Servo 共用）：
+     *   tick    : avgSpeed += calculateSpeed(V²/R, torque()) × signum(coil.current())
+     *   lazyTick: newSpeed = clamp(avgSpeed/5, ±maxRPM) → generatedSpeed/generatedSU
+     *   应力     : torque() = BlockStressValues.getCapacity(block) × torqueForStress
+     *              —— 固定值，不随负载/转速变化（无反馈）
+     *   电气侧   : 线圈就是一个固定电阻（builder.connect(resistance(), …)），
+     *              不产生 EMF、不随负载改变阻抗
+     *
+     * 自管模式下原版 coil.potentialDifference() 不可用（原版时域已禁用）→ 用
+     * 引擎的【设备电流 I】代入同一公式：P = I²·R（纯电阻负载上与 V²/R 等价）。
+     * 这样公式、限幅、即开即停（无惯性积分）、固定应力全部与原版一致。
+     * ========================================================================= */
+
+    /** 原版换算常数（ElectricMotorBlockEntity.CONVERSION_CONSTANT = 60π/2） */
+    public static final double CONVERSION_CONSTANT = 60 * Math.PI / 2.0;
+
+    /** 自管引擎的设备电流（A；未建模/无记录 → 0） */
+    public static double deviceCurrent(BlockEntity be) {
+        try {
+            if (be == null) return 0;
+            double i = com.hdf.cryptand.neoforge.powergrid.state.DeviceCurrent
+                    .read(be.getBlockPos());
+            return Double.isFinite(i) ? i : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /* ============================================================================
+     * ⚠⚠ 2026-09-13 根因修复："原版电机转轴不转，但自定义的会转"
+     *
+     * 真因：resistance() / resistance(String) 是接口 IElectricEntity 的
+     *   【default 方法】（默认体 = ResistanceValues.get(block[, id])），三个原版电机
+     *   类都没有覆写它。而旧实现用
+     *       c.getDeclaredMethod(name)  沿 getSuperclass() 上溯
+     *   —— getDeclaredMethod 【只返回本类声明的方法，不返回继承/接口方法】，
+     *   且沿 superclass 上溯【永不进入接口】⇒ resistance() 永远找不到 ⇒ 返回 0。
+     *   后果：vanillaSpeedRpm 里 r = 1e-9 ⇒ P = I²·1e-9 ≈ 0 ⇒ rpm ≡ 0 ⇒ 转轴不转。
+     *   （torque() 是各电机类自己声明的 public 方法 → 能找到，所以只有电阻踩雷。）
+     *
+     * 修复：方法解析改为 类层次 → 接口层次（含 default） → 公开方法兜底。
+     * ========================================================================== */
+
+    /** 解析数值方法：类层次 → 接口层次（含 default 方法）→ 公开方法兜底；失败 null。 */
+    public static java.lang.reflect.Method findNumberMethod(
+            Class<?> cls, String name, Class<?>... params) {
+        if (cls == null) return null;
+        for (Class<?> c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                return c.getDeclaredMethod(name, params);
+            } catch (NoSuchMethodException ignored) {
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        for (Class<?> c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
+            java.lang.reflect.Method m = findInInterfaces(c.getInterfaces(), name, params);
+            if (m != null) return m;
+        }
+        try {
+            return cls.getMethod(name, params);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static java.lang.reflect.Method findInInterfaces(
+            Class<?>[] ifaces, String name, Class<?>... params) {
+        if (ifaces == null) return null;
+        for (Class<?> i : ifaces) {
+            try {
+                return i.getDeclaredMethod(name, params);
+            } catch (NoSuchMethodException ignored) {
+            } catch (Throwable ignored) {
+                return null;
+            }
+            java.lang.reflect.Method m = findInInterfaces(i.getInterfaces(), name, params);
+            if (m != null) return m;
+        }
+        return null;
+    }
+
+    /** 反射调用无参数值方法（resistance() / torque() / getValue()…）；失败 0 */
+    public static double callNumber(Object obj, String name) {
+        if (obj == null) return 0;
+        try {
+            java.lang.reflect.Method m = findMethodCached(obj.getClass(), name);
+            if (m == null) return 0;
+            m.setAccessible(true);
+            Object v = m.invoke(obj);
+            return v instanceof Number n ? n.doubleValue() : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /** 反射调用【带一个 String 参数】的数值方法（resistance("idle")/("on")…）；失败 0 */
+    public static double callNumberStr(Object obj, String name, String arg) {
+        if (obj == null) return 0;
+        try {
+            java.lang.reflect.Method m = findMethodCached(obj.getClass(), name, String.class);
+            if (m == null) return 0;
+            m.setAccessible(true);
+            Object v = m.invoke(obj, arg);
+            return v instanceof Number n ? n.doubleValue() : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    /** 反射读 int 字段（currentAngle / movingTicks…）；失败 0 */
+    public static int readInt(Object obj, String name) {
+        Object v = getField(obj, name);
+        return v instanceof Number n ? n.intValue() : 0;
+    }
+
+    /** 反射读 float 字段（avgSpeed / generatedSU…）；失败 0 */
+    public static float readFloat(Object obj, String name) {
+        Object v = getField(obj, name);
+        return v instanceof Number n ? n.floatValue() : 0f;
+    }
+
+    /** 反射累加 float 字段（avgSpeed += d）；失败忽略 */
+    public static void addFloat(Object obj, String name, double d) {
+        float cur = readFloat(obj, name);
+        setField(obj, name, (float) (cur + d));
+    }
+
+    /** 原版转速公式（RPM）：speed = P / torque × 60π/2 × sign(I)，P = I²·R */
+    public static double vanillaSpeedRpm(BlockEntity be, double resistance, double torque) {
+        try {
+            if (be == null || !(torque > 0)) return 0;
+            double i = deviceCurrent(be);
+            if (i == 0) return 0;
+            double r = resistance > 0 ? resistance : 1e-9;
+            double p = i * i * r;
+            return p / torque * CONVERSION_CONSTANT * Math.signum(i);
+        } catch (Throwable ignored) {
+            return 0;
         }
     }
 
@@ -85,8 +268,7 @@ public final class MotorTakeoverBase {
         try {
             BlockEntity be = (BlockEntity) self;
             BlockPos pos = be.getBlockPos();
-            double[] s = com.hdf.cryptand.neoforge.powergrid.adapter
-                    .MotorStateStore.get(pos);
+            double[] s = com.hdf.cryptand.neoforge.powergrid.state.MotorStateStore.get(pos);
             if (s == null || s.length < 1) return;
             double temp = s.length >= 4 ? s[3] : Double.NaN;
             applyValues(self, s[0], s.length > 2 ? s[2] : 0, temp);
@@ -107,26 +289,33 @@ public final class MotorTakeoverBase {
                                    double tempC) {
         try {
             // ⚠ 2026-08-26 NaN 防线：rpm/stress 非有限 → 不写（避免污染 Create 网络）
-            if (!Double.isFinite(omega) || !Double.isFinite(stress)) return;
-            // ⚠ 2026-08-28 用户：16384 限制由【具体电机组装器】实现（模型仅纯计算）——
-            // 写 Create generatedSU/load 前饱和为 Create 满刻度
-            stress = Math.min(stress, 16384.0);
+            // ⚠ 2026-09-13：omega 有限即可（stress 允许 NaN = 引擎不提供应力）
+            if (!Double.isFinite(omega)) return;
             BlockEntity be = (BlockEntity) self;
             float sign = omega >= 0 ? 1f : -1f;
             float rpm = (float) (Math.abs(omega) * 60.0 / (2.0 * Math.PI)) * sign;
-            // ① 原版字段（每种电机只写它有的字段；反射不存在自动跳过）
-            setField(self, "avgSpeed", rpm);
+            // ① 转速字段（每种电机只写它有的字段；反射不存在自动跳过）
+            //   ⚠ avgSpeed 必须写 rpm×5：原版语义是"累加器，lazyTick 时 /5 后清零"，
+            //     写 rpm 会让 lazyTick 折算成 rpm/5（实测"转轴几乎不转"）。
+            setField(self, "avgSpeed", rpm * 5f);
             setField(self, "generatedSpeed", rpm);
-            setField(self, "generatedSU", (float) stress);
-            setField(self, "load", (float) stress);
-            // ② 温度写回原版 ThermalBehaviour（护目镜/温度计显示一致）
-            if (Double.isFinite(tempC)) {
-                Object tb = getField(self, "thermalBehaviour");
-                if (tb instanceof org.patryk3211.powergrid.electricity
-                        .base.ThermalBehaviour th) {
-                    th.setTemperature((float) tempC);
-                }
+            // ② 应力【默认不写】：用户"输出固定应力以及转速，不会有反馈"——
+            //    原版电机的应力由原版 torque()/Create BlockStressValues 提供，
+            //    引擎下发 NaN（不提供）时保持原值；恒速电机的 generatedSU 由它
+            //    自己的 lazyTick 按 avgSpeed 折算。只有引擎确有应力值才写。
+            if (Double.isFinite(stress)) {
+                // 应力（2026-09-13 用户："应力和转速都通过每次计算发送"）——
+                // 引擎每轮算出并下发；16384 限制由组装器实现（模型仅纯计算），
+                // 写前饱和。只写 generatedSU（= 电机输出的应力容量；恒速电机
+                // getGeneratedSpeed 的"是否通电"判据 + Create 应力显示都用它，
+                // 与其 lazyTick 折算结果一致）；⚠ 不写 load —— load 是 Create
+                // 网络侧的【负载消耗】，应由网络真实计算，写它会让应力表显示错值。
+                setField(self, "generatedSU", (float) Math.min(stress, 16384.0));
             }
+            // ② ⚠ 2026-09-12 用户："温度不再使用原版路径，全部使用自管"——
+            //    不再把自管温度写回原版 ThermalBehaviour。读取方（护目镜/手持与方块
+            //    温度计/过热判定）统一直接读 DeviceThermalStore，写回只会制造
+            //    第二份温度状态并污染原版字段。
             // ③ Create 网络同步（存在网络才传播；内部规避 NPE）
             syncCreate(be);
         } catch (Throwable ignored) {
@@ -184,6 +373,15 @@ public final class MotorTakeoverBase {
         try { LAST_SYNC.remove(be.getBlockPos().asLong()); } catch (Throwable ignored) { }
     }
 
+    /** pos 版清理（真拆除时方块/BE 已缺失，仅 pos 可用；2026-08-30 审计 C16：
+     *  原 syncCleanup 无调用方 → LAST_SYNC 泄漏 + 同位置重放新设备首次
+     *  syncCreate 可能误判"值未变"跳过 Create 网络传播。由
+     *  NetworkDestructionDetector 真拆除路径调用）。 */
+    public static void syncCleanupPos(BlockPos pos) {
+        if (pos == null) return;
+        try { LAST_SYNC.remove(pos.asLong()); } catch (Throwable ignored) { }
+    }
+
     /* ==================== 诊断（节流 5s） ==================== */
 
     private static final java.util.concurrent.ConcurrentHashMap<String, Long> DBG =
@@ -197,7 +395,7 @@ public final class MotorTakeoverBase {
             if (last != null && now - last < 5000) return;
             DBG.put(key, now);
             BlockPos p = ((BlockEntity) self).getBlockPos();
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[{}] pos={} rpm={} load={}",
                     tag, p, String.format("%.1f", rpm),
                     String.format("%.0f", load));
@@ -214,10 +412,10 @@ public final class MotorTakeoverBase {
             if (last != null && now - last < 5000) return;
             DBG.put(key, now);
             if (t == null) {
-                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+                CryptandNeoForge.WAF_LOGGER.warn(
                         "[{}] exception: null", tag);
             } else {
-                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+                CryptandNeoForge.WAF_LOGGER.warn(
                         "[{}] exception {}: {}",
                         tag, t.getClass().getName(),
                         String.valueOf(t.getMessage()), t);

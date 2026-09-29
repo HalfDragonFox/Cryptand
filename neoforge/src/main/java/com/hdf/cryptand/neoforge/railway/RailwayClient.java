@@ -12,7 +12,9 @@ import net.neoforged.neoforge.client.event.EntityRenderersEvent;
  * 客户端注册（仅 CLIENT 分发加载，服务端不加载本类 → 无 RuntimeDistCleaner 风险）。
  * 注册受电弓 / 接触网悬挂块的方块实体渲染器。
  */
-@EventBusSubscriber(value = Dist.CLIENT, modid = Cryptand.MOD_ID)
+// ⚠ 2026-08-30 根因修复（与 CapacitorStartMotorsClient 同问题）：RegisterRenderers
+// 是 MOD 总线事件；bus=Bus.MOD 已弃用 → 编程式注册（CryptandNeoForge 客户端分支
+// modEventBus.register(RailwayClient.class)）。
 public final class RailwayClient {
 
     @SubscribeEvent

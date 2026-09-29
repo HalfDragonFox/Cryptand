@@ -13,6 +13,13 @@
 
 package com.hdf.cryptand.neoforge.powergrid.mixin.multithreading;
 
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorPipeline;
+import com.hdf.cryptand.neoforge.powergrid.network.CryptandTopologyManager;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.PowerGridWireConverter;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCacheRegistry;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceParamCache;
+
 import org.patryk3211.powergrid.PowerGrid;
 import org.patryk3211.powergrid.electricity.WorldNetworks;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
@@ -51,6 +58,11 @@ public abstract class WorldNetworksMixin {
 
     @Unique
     private void cryptand$doComputeRound() {
+        // ⚠ 2026-09-11 仿真总闸门控（实测根因：所有 enable* 关闭后仍每 tick 全量同步 → 卡顿）：
+        // 仿真未启用（enableCryptandSimulation / enableCryptandSolver 均 false）时，本方法的世界级
+        // 工作（DeviceParamCache.sync 全量读 BE + DeviceCacheRegistry.syncAll + WORLD_WIRES/NETS 快照
+        // + TopoMgr.tick/processPost）结果【无任何消费者】→ 纯开销。直接返回。
+        if (!CryptandTopologyManager.simulationEnabled()) return;
         this.perf.start();
 
         // 快照遍历：主线程可能在 island discovery / 节点注册时修改 subnetworks，
@@ -97,35 +109,52 @@ public abstract class WorldNetworksMixin {
                     if (n != null) allNets.add(n);
                 }
             }
-            // 快照世界全量导线表（buildFromTerminals 连通性扩展用；主线程安全）
-            com.hdf.cryptand.neoforge.powergrid.adapter.PhasorWriteback.WORLD_WIRES =
-                    new java.util.ArrayList<>(this.transmissionLines.values());
-            // 快照世界全部网络（电路原理图导出等工具用）
-            com.hdf.cryptand.neoforge.powergrid.adapter.PhasorWriteback.WORLD_NETS =
-                    new java.util.ArrayList<>(allNets);
+            // 快照世界全量导线表 / 网络表（buildFromTerminals 连通性扩展、导出工具用）：
+            // ⚠ 2026-09-11 用户：读取改增量——签名（导线数 + 网络数 + 自管图版本）未变
+            // 则复用上一份快照，不再每 tick 新建 ArrayList（省分配；导线增删必改 size/版本）。
+            int wireSig = this.transmissionLines.size();
+            int netSig = allNets.size();
+            long graphSig = 0L;
+            try {
+                graphSig = com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager
+                        .get().version();
+            } catch (Throwable ignored) {
+            }
+            if (wireSig != cryptand$wireSnapSize || netSig != cryptand$netSnapSize
+                    || graphSig != cryptand$snapGraphVer) {
+                cryptand$wireSnapSize = wireSig;
+                cryptand$netSnapSize = netSig;
+                cryptand$snapGraphVer = graphSig;
+                PhasorPipeline.WORLD_WIRES =
+                        new java.util.ArrayList<>(this.transmissionLines.values());
+                PhasorPipeline.WORLD_NETS =
+                        new java.util.ArrayList<>(allNets);
+            }
             // 自管导线拓扑同步（2026-08-13 阶段1：双源迁移入口）——从原版全量
             // 导线表生成引擎级 WireGraph，Cryptand 核心拓扑自此进入自管图。
             // 原版网络仍作电压宿主（阶段1）；拓扑已脱离"读原版网络"。
             try {
-                com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager.get().syncFromWorld(
-                        com.hdf.cryptand.neoforge.powergrid.adapter.PhasorWriteback.WORLD_WIRES);
+                // 2026-09-08：WireNetworkManager.syncFromWorld 已随平台上移删除
+                // （一行委托）——调用方直调转换器，语义不变
+                com.hdf.cryptand.neoforge.powergrid.network.wire.PowerGridWireConverter
+                        .convertWires(PhasorPipeline.WORLD_WIRES);
             } catch (Throwable ignored) {
             }
             // 设备参数同步（2026-08-15 完全异步架构：主线程=发消息，不计算）：
             // 读方块参数 → 线程安全缓存 DeviceParamCache。后台求解线程只读缓存，
             // 绝不碰 level/BE（避免 MC BE 表并发崩溃）。
             try {
-                com.hdf.cryptand.neoforge.powergrid.adapter.DeviceParamCache.sync(this.world);
+                DeviceParamCache.sync(this.world);
             } catch (Throwable ignored) {
             }
             // 组装器缓存更新（2026-08-15 用户设计：BE 绑定缓存，主线程每 tick
             // 原子写；后台组装器读缓存构建，不碰 BE）。
             try {
-                com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCacheRegistry
+                DeviceCacheRegistry
                         .syncAll(this.world);
             } catch (Throwable ignored) {
             }
-            com.hdf.cryptand.neoforge.powergrid.adapter.CryptandTopologyManager.get()
+            CryptandTopologyManager.get()
                     .tick(this.world, new java.util.ArrayList<>(allNets));
         } catch (Throwable t) {
             // 相量回写失败不影响游戏主循环（下一 tick 自动恢复）
@@ -135,6 +164,14 @@ public abstract class WorldNetworksMixin {
     }
 
     // ========== preTick ==========
+
+    /** 增量快照签名（2026-09-11：导线数 + 网络数 + 自管图版本未变 → 复用快照）。 */
+    @Unique
+    private static int cryptand$wireSnapSize = -1;
+    @Unique
+    private static int cryptand$netSnapSize = -1;
+    @Unique
+    private static long cryptand$snapGraphVer = -1L;
 
     @Unique
     private static long cryptand$diagPreTickUs;
@@ -172,9 +209,9 @@ public abstract class WorldNetworksMixin {
         // 【禁用】——原版网络仅作转换源，不再维护 wires/网络对象（设备已从自管
         // 宿主 DEVICE_TERMINAL_V 读电压）。空导线清理仍执行（防脏表膨胀）。
         // 转换关闭 → 保留原版 line.tick()（安全兜底，完全原版行为）。
-        boolean selfManaged = com.hdf.cryptand.neoforge.powergrid.adapter.PowerGridWireConverter
+        boolean selfManaged = PowerGridWireConverter
                 .isEnabled()
-                && com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager.get().nodeCount() > 0;
+                && WireNetworkManager.get().nodeCount() > 0;
         while (lineIter.hasNext()) {
             TransmissionLine line = lineIter.next();
             if (line.segments.isEmpty()) {

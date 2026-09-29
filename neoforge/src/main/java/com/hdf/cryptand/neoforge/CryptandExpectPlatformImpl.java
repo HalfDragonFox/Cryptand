@@ -1,4 +1,4 @@
-package com.hdf.cryptand.neoforge.simserver;
+package com.hdf.cryptand.neoforge;
 
 import com.hdf.cryptand.CryptandExpectPlatform;
 import net.neoforged.fml.loading.FMLPaths;

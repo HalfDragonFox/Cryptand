@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "cryptand:block/ai_display" }
+  }
+}

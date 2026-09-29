@@ -17,10 +17,13 @@
 
 package com.hdf.cryptand.neoforge.powergrid.mixin.customcore;
 
-import com.hdf.cryptand.neoforge.powergrid.adapter.MultimeterDebug;
-import com.hdf.cryptand.neoforge.powergrid.adapter.MultimeterSampler;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PowerGridWireConverter;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
+import com.hdf.cryptand.neoforge.powergrid.config.ConfigPowerGrid;
+import com.hdf.cryptand.neoforge.powergrid.measurement.MultimeterDebug;
+import com.hdf.cryptand.neoforge.powergrid.measurement.MultimeterSampler;
+import com.hdf.cryptand.neoforge.powergrid.measurement.SelfManagedMultimeter;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.PowerGridWireConverter;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
+
 import net.minecraft.ChatFormatting;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -74,6 +77,15 @@ public abstract class MultimeterItemMixin {
                 md = new CompoundTag();
                 MultimeterItem.saveModeData(stack, md);
             }
+            // ⚠ 2026-09-11 诊断（用户：高级万用表表笔线不显示——Pos 未写入则渲染器无线可画）：
+            // 记录每次 onTerminal 接管调用的模式/端点/已有 Pos/Neg 状态，便于一次定位。
+            try {
+                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                        "[Measure] onTerminal mode={} ep={} hasPos={} hasNeg={}",
+                        self.getMode(stack), endpoint.getClass().getSimpleName(),
+                        md.contains("Pos"), md.contains("Neg"));
+            } catch (Throwable ignored) {
+            }
             if (md.contains("Pos")) {
                 IWireEndpoint cur = WireEndpointType.deserialize(md.getCompound("Pos"));
                 if (endpoint.equals(cur)) {
@@ -101,15 +113,15 @@ public abstract class MultimeterItemMixin {
         //   相量结果 → S2C），不依赖原版网络/原版 getMeasurement（时域已禁）。
         try {
             if (PowerGridWireConverter.isEnabled()
-                    && com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager.get().nodeCount() > 0) {
+                    && WireNetworkManager.get().nodeCount() > 0) {
                 cir.setReturnValue(
-                        com.hdf.cryptand.neoforge.powergrid.adapter.SelfManagedMultimeter.getText(
+                        SelfManagedMultimeter.getText(
                                 level, player, stack));
                 return;
             }
         } catch (Throwable ignored) {
         }
-        if (!ConfigLoad.ENABLE_MULTIMETER_DEBUG.get()) return;   // 关闭 → 原版行为
+        if (!ConfigPowerGrid.ENABLE_MULTIMETER_DEBUG.get()) return;   // 关闭 → 原版行为
 
         MultimeterItem self = (MultimeterItem) (Object) this;
         try {

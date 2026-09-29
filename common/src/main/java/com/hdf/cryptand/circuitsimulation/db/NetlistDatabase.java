@@ -1,6 +1,7 @@
 package com.hdf.cryptand.circuitsimulation.db;
 
 import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.AssemblerRecord;
+import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.DeviceInfoRecord;
 import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.NetlistSnapshot;
 import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.NetworkCacheRecord;
 import com.hdf.cryptand.circuitsimulation.db.NetlistRecord.NetworkRecord;
@@ -145,6 +146,8 @@ public final class NetlistDatabase implements Closeable {
             wires.create(c);
             renderers.create(c);
             NetworkCacheTable.create(c);
+            // 2026-09-15：设备信息表（组装器语境下的 per-方块 KV）
+            DeviceInfoTable.create(c);
         });
         long salt = MetaTable.getLong(store, META_ID_SALT, -1);
         long counter = MetaTable.getLong(store, META_ID_COUNTER, 0);
@@ -434,6 +437,41 @@ public final class NetlistDatabase implements Closeable {
             return store.query(NetworkCacheTable::all);
         } catch (SQLException e) {
             LOGGER.warn("[NetlistDb] loadAllNetworkCaches failed", e);
+            return new ArrayList<>();
+        }
+    }
+
+    // ==================== 设备信息表（2026-09-15 用户） ====================
+
+    /**
+     * 设备信息：异步全量替换（世界保存/ESC 自动保存时调用，不阻塞主线程）。
+     * <p>
+     * 与网络缓存同一约定（用户要求）：游戏期间【零 SQLite 交互】——设备信息先在
+     * 内存里累积，世界保存时一次性批量写；世界加载时一次性全量读回。
+     * 单事务清空 + 全量写 = 表内容始终是当前世界的最新快照（消失设备的陈旧行自动清理）。
+     */
+    public AsyncOp saveDeviceInfosAsync(List<DeviceInfoRecord> list) {
+        if (closed.get()) return AsyncOp.done();
+        List<DeviceInfoRecord> l = list == null
+                ? java.util.Collections.emptyList() : list;
+        return store.asyncWrite((Connection c) -> DeviceInfoTable.replaceAll(c, l));
+    }
+
+    /** 设备信息：同步全量替换（退出世界时调用：立即落盘，不依赖 flush 时机）。 */
+    public AsyncOp saveDeviceInfosSync(List<DeviceInfoRecord> list) throws SQLException {
+        if (closed.get()) return AsyncOp.done();
+        List<DeviceInfoRecord> l = list == null
+                ? java.util.Collections.emptyList() : list;
+        store.transaction((Connection c) -> DeviceInfoTable.replaceAll(c, l));
+        return AsyncOp.done();
+    }
+
+    /** 设备信息：同步读全部（世界加载时一次性载入内存）。 */
+    public List<DeviceInfoRecord> loadAllDeviceInfos() {
+        try {
+            return store.query(DeviceInfoTable::all);
+        } catch (SQLException e) {
+            LOGGER.warn("[NetlistDb] loadAllDeviceInfos failed", e);
             return new ArrayList<>();
         }
     }
@@ -957,6 +995,66 @@ public final class NetlistDatabase implements Closeable {
                  ResultSet rs = ps.executeQuery()) {
                 return rs.next() ? rs.getInt(1) : 0;
             }
+        }
+    }
+
+    // ==================== 设备信息表 ====================
+
+    private static final class DeviceInfoTable {
+        private static void create(Connection c) throws Exception {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "CREATE TABLE IF NOT EXISTS device_info ("
+                            + "dim TEXT NOT NULL DEFAULT '', "
+                            + "x INTEGER NOT NULL, "
+                            + "y INTEGER NOT NULL, "
+                            + "z INTEGER NOT NULL, "
+                            + "device_class TEXT, "
+                            + "info BLOB, "
+                            + "updated_at INTEGER NOT NULL DEFAULT 0, "
+                            + "PRIMARY KEY (dim, x, y, z))")) {
+                ps.executeUpdate();
+            }
+        }
+
+        /** 全量替换（清空 + 批量写；世界保存时单事务内调用） */
+        private static void replaceAll(Connection c, List<DeviceInfoRecord> list)
+                throws Exception {
+            try (PreparedStatement del = c.prepareStatement("DELETE FROM device_info");
+                 PreparedStatement ps = c.prepareStatement(
+                         "INSERT OR REPLACE INTO device_info"
+                                 + "(dim,x,y,z,device_class,info,updated_at)"
+                                 + " VALUES(?,?,?,?,?,?,?)")) {
+                del.executeUpdate();
+                for (DeviceInfoRecord r : list) {
+                    if (r == null || r.dim() == null) continue;
+                    ps.setString(1, r.dim());
+                    ps.setInt(2, r.x());
+                    ps.setInt(3, r.y());
+                    ps.setInt(4, r.z());
+                    ps.setString(5, r.deviceClass());
+                    ps.setBytes(6, r.info());
+                    ps.setLong(7, r.updatedAt());
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+        }
+
+        private static List<DeviceInfoRecord> all(Connection c) throws Exception {
+            List<DeviceInfoRecord> out = new ArrayList<>();
+            try (PreparedStatement ps = c.prepareStatement(
+                    "SELECT dim,x,y,z,device_class,info,updated_at FROM device_info");
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(new DeviceInfoRecord(
+                            rs.getString("dim"),
+                            rs.getInt("x"), rs.getInt("y"), rs.getInt("z"),
+                            rs.getString("device_class"),
+                            rs.getBytes("info"),
+                            rs.getLong("updated_at")));
+                }
+            }
+            return out;
         }
     }
 

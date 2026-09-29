@@ -38,10 +38,27 @@ public final class SimulationCore {
     // ===== 组合件（每个实例独立 = 网络注册表/求解器/异步交互管理类全部隔离） =====
     private final String name;
     private final NetworkRegistry registry = new NetworkRegistry();
-    private final CoreNetOpExecutor executor = new CoreNetOpExecutor(registry);
+    /** ⚠ 2026-08-30 每实例时间基准（用户：核心实例连接 EDA/MC 各自独立时间）：
+     *  默认独立 SimClock（真实流逝）；EDA/仿真场景注入 SimulatedTimeBase（固定
+     *  步长）。与求解器共享——executor 求解前设 net.dt = timeBase.advance()。 */
+    private final com.hdf.cryptand.circuitsimulation.solver.TimeBase timeBase;
+    private final CoreNetOpExecutor executor;
+
+    /** ⚠ 2026-08-30 实例组装器工厂（用户：注册工厂属于核心具体实例——对不同
+     *  对象创建单独的隔离存储）：每实例一个——注册回调把创建的每个网络注册进
+     *  本实例的网络注册表（隔离——与其他实例互不干扰）。引擎独立完整电路仿真
+     *  核心：预制/自定义组装器 + 绑定——单设备天然成网；批量含导线一起注册。 */
+    private final com.hdf.cryptand.engine.AssemblerFactory factory;
+    private final java.util.concurrent.atomic.AtomicLong factoryKey =
+            new java.util.concurrent.atomic.AtomicLong(0);
 
     private volatile AsyncInteractionManager async;
     private volatile boolean started;
+    /** ⚠ 2026-08-30 扩展组件（ECS Component）——外部接口扩展（TCP/UDP/消息等）
+     *  经 attach 接入本实例；start/stop 时统一启停。每实例独立扩展列表。 */
+    private final java.util.concurrent.CopyOnWriteArrayList<
+            com.hdf.cryptand.circuitsimulation.core.extensions.CoreExtension> extensions =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /** 网络操作任务模式（默认普通模式=虚拟线程；EXCLUSIVE 直算仅测试用） */
     private volatile TaskMode dispatchMode = TaskMode.NORMAL;
@@ -49,19 +66,39 @@ public final class SimulationCore {
     /**
      * 可多实例（2026-08-22 用户架构：核心支持多对象隔离——MC 世界 / 每个 EDA
      * 客户端会话各一个独立核心实例，离线时释放销毁清缓存）。各实例持有独立的
-     * 网络注册表 / 执行器 / 异步交互管理类，互不干扰。
+     * 网络注册表 / 执行器 / 异步交互管理类 / 时间基准，互不干扰。
      */
     public SimulationCore() {
-        this("core-" + java.util.UUID.randomUUID().toString().substring(0, 8));
+        this("core-" + java.util.UUID.randomUUID().toString().substring(0, 8),
+                new com.hdf.cryptand.circuitsimulation.solver.SimClock());
     }
 
     /** 命名实例（诊断 / 会话管理用） */
     public SimulationCore(String name) {
+        this(name, new com.hdf.cryptand.circuitsimulation.solver.SimClock());
+    }
+
+    /** 命名实例 +【每实例时间基准】（EDA 传 SimulatedTimeBase 固定步长 /
+     *  MC 传共享 SimClock 真实流逝；null → 独立 SimClock）。 */
+    public SimulationCore(String name,
+                          com.hdf.cryptand.circuitsimulation.solver.TimeBase timeBase) {
         this.name = name == null || name.isBlank() ? "core" : name;
+        this.timeBase = timeBase == null
+                ? new com.hdf.cryptand.circuitsimulation.solver.SimClock() : timeBase;
+        // 实例组装器工厂：注册回调 → 本实例网络注册表（引擎网络上下文——图+
+        // 组装器+绑定——完整求解；每实例隔离存储）
+        this.factory = new com.hdf.cryptand.engine.AssemblerFactory(
+                ctx -> registry.registerCtx(factoryKey.incrementAndGet(), ctx));
+        this.executor = new CoreNetOpExecutor(registry, this.timeBase);
     }
 
     /** 实例名（会话管理 / 诊断） */
     public String name() { return name; }
+
+    /** ⚠ 2026-08-30 每实例时间基准（只读；EDA 注入仿真时钟 / MC 注入真实时钟） */
+    public com.hdf.cryptand.circuitsimulation.solver.TimeBase timeBase() {
+        return timeBase;
+    }
 
     // ===== 生命周期 =====
 
@@ -74,6 +111,10 @@ public final class SimulationCore {
         ThreadDispatcher dispatcher = ThreadDispatchers.get();
         async = new AsyncInteractionManager(dispatcher, executor, dispatchMode);
         started = true;
+        // 扩展启动（外部接口监听等）
+        for (com.hdf.cryptand.circuitsimulation.core.extensions.CoreExtension e : extensions) {
+            try { e.start(); } catch (Throwable ignored) { }
+        }
     }
 
     /** 是否已启动 */
@@ -81,6 +122,10 @@ public final class SimulationCore {
 
     /** 停止核心：清空网络操作记录表（正在执行的操作自然完成）。 */
     public synchronized void stop() {
+        // 扩展停止（外部接口关闭监听）
+        for (com.hdf.cryptand.circuitsimulation.core.extensions.CoreExtension e : extensions) {
+            try { e.stop(); } catch (Throwable ignored) { }
+        }
         if (async != null) {
             try { async.clear(); } catch (Throwable ignored) { }
         }
@@ -93,10 +138,77 @@ public final class SimulationCore {
         this.dispatchMode = mode == null ? TaskMode.NORMAL : mode;
     }
 
+    // ===== 扩展组件（ECS Component）管理 =====
+
+    /** 接入扩展（TCP/UDP/消息等外部接口扩展；onAttach 后 start 时启动）。
+     *  链式返回本实例。 */
+    public SimulationCore attach(com.hdf.cryptand.circuitsimulation.core.extensions.CoreExtension ext) {
+        if (ext != null) {
+            ext.onAttach(this);
+            extensions.add(ext);
+            if (started) {
+                try { ext.start(); } catch (Throwable ignored) { }
+            }
+        }
+        return this;
+    }
+
+    /** 断开扩展（stop 后 onDetach） */
+    public SimulationCore detach(com.hdf.cryptand.circuitsimulation.core.extensions.CoreExtension ext) {
+        if (ext != null && extensions.remove(ext)) {
+            try { ext.stop(); } catch (Throwable ignored) { }
+            ext.onDetach(this);
+        }
+        return this;
+    }
+
+    /** 已接入扩展列表（诊断/遍历） */
+    public java.util.List<com.hdf.cryptand.circuitsimulation.core.extensions.CoreExtension> extensions() {
+        return new java.util.ArrayList<>(extensions);
+    }
+
+    // ===== 会话管理（2026-08-30 用户：注册实例后客户拿句柄，消息经句柄交互） =====
+
+    /** 活跃会话（sessionId → handle；每前端一个会话） */
+    private final java.util.concurrent.ConcurrentHashMap<String,
+            com.hdf.cryptand.circuitsimulation.core.extensions.SessionHandle> sessions =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 注册会话：客户获得 {@link SessionHandle}，后续消息经句柄交互
+     *  （register/submit/solve/result/unregister/close 全走句柄）。 */
+    public com.hdf.cryptand.circuitsimulation.core.extensions.SessionHandle openSession() {
+        com.hdf.cryptand.circuitsimulation.core.extensions.SessionHandle h =
+                new com.hdf.cryptand.circuitsimulation.core.extensions.SessionHandle(this);
+        sessions.put(h.sessionId(), h);
+        return h;
+    }
+
+    /** 关闭会话（SessionHandle.close 调用） */
+    public void closeSession(String sessionId) {
+        if (sessionId != null) sessions.remove(sessionId);
+    }
+
+    /** 活跃会话数（诊断） */
+    public int sessionCount() { return sessions.size(); }
+
     // ===== 组件访问（诊断/扩展） =====
 
     /** 网络注册表（直接注册/查询网络与结果） */
     public NetworkRegistry registry() { return registry; }
+
+    /** ⚠ 2026-08-30 推进步长倍率（用户：可配置每步长倍率——不同速度下推进的
+     *  真实情况；默认 1× = 20tick/s。倍率 × 0.05 = 每步推进时长——温度/能量/
+     *  动力学推进统一使用）。设置作用于本实例全部注册网络。 */
+    public void setSimSpeed(double multiplier) {
+        double m = multiplier > 0 ? multiplier : 1.0;
+        for (NetworkRegistry.Entry e : registry.entries()) {
+            if (e.ctx != null) e.ctx.simSpeed = m;
+        }
+    }
+
+    /** 实例组装器工厂（每实例一个——创建预制/自定义组装器 + 绑定 → 注册进本
+     *  实例网络注册表——隔离存储；单设备天然成网、批量含导线一起注册） */
+    public com.hdf.cryptand.engine.AssemblerFactory factory() { return factory; }
 
     /** 核心执行器（同步求解 API 等） */
     public CoreNetOpExecutor executor() { return executor; }
@@ -127,6 +239,15 @@ public final class SimulationCore {
     /** 便捷：网络求解请求（无附加数据） */
     public void submitSolve(Object networkKey) {
         submitSolve(networkKey, null);
+    }
+
+    /** ⚠ 2026-08-30 通用网络操作提交（扩展/外部接口用：TcpEndpoint 等经此
+     *  提交任意 NetOpKind 请求；与 submitSplitMerge/submitRebuild/submitSolve
+     *  等价，只是把 kind 参数化）。 */
+    public void submit(Object networkKey, NetOpRequest request) {
+        if (request == null || networkKey == null) return;
+        ensureStarted();
+        async.submit(networkKey, request);
     }
 
     /** 当前待处理/处理中的网络操作记录数（诊断） */

@@ -27,7 +27,7 @@ public interface ElectricalNetworkAccessor {
     /** dirty 标志写访问：Cryptand 禁用 prepare（清 dirty 唯一路径）后，任何
      *  addNode/addWire 置位的 dirty 永不清除 → ElectricalNetwork.setValue 第 0 行
      *  `if (dirty) return` 静默失败 → 节点电压不回写 → 悬空端 0V → 烧线。
-     *  PhasorWriteback 回写前必须清 dirty 恢复 setValue 生效。 */
+     *  PhasorPipeline 回写前必须清 dirty 恢复 setValue 生效。 */
     @Accessor("dirty")
     void cryptand$setDirty(boolean dirty);
 }

@@ -1,0 +1,4 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": { "all": "cryptand:block/soc_case_front" }
+}

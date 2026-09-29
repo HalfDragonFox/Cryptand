@@ -14,11 +14,11 @@ package com.hdf.cryptand.neoforge.powergrid.device.light;
 import com.hdf.cryptand.circuitsimulation.model.Network;
 import com.hdf.cryptand.circuitsimulation.model.composite.CompositeModel;
 import com.hdf.cryptand.circuitsimulation.model.composite.SwitchModel;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkContext;
-import com.hdf.cryptand.neoforge.powergrid.device.SourceCacheAssembler;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCache;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCacheRegistry;
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorNetworkContext;
 import com.hdf.cryptand.neoforge.powergrid.device.DeviceWire;
-import com.hdf.cryptand.neoforge.powergrid.device.Assembler;
+import com.hdf.cryptand.neoforge.powergrid.device.cache.SourceCacheAssembler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
@@ -93,10 +93,10 @@ public final class LightAssembler implements SourceCacheAssembler {
         final BlockPos p = pos;
         paramSources.add(() -> {
             try {
-                com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache c =
-                        com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCacheRegistry.get(p);
+                DeviceCache c =
+                        DeviceCacheRegistry.get(p);
                 if (c == null) return;
-                com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache.Data d = c.in();
+                DeviceCache.Data d = c.in();
                 if (d.resistance > 0) {
                     sm.setResistance(d.resistance); // 更新闭合电阻（灯丝 R，随温度变）
                     sm.setOn(d.enabled);            // 状态：装/未装/烧断

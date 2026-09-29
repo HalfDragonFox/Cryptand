@@ -1,0 +1,12 @@
+{
+  "variants": {
+    "facing=north,on_floor=true": {"model":"cryptand:block/peripheral_helm/block"},
+    "facing=north,on_floor=false": {"model":"cryptand:block/peripheral_helm/block_up"},
+    "facing=east,on_floor=true": {"model":"cryptand:block/peripheral_helm/block","y":90},
+    "facing=east,on_floor=false": {"model":"cryptand:block/peripheral_helm/block_up","y":90},
+    "facing=south,on_floor=true": {"model":"cryptand:block/peripheral_helm/block","y":180},
+    "facing=south,on_floor=false": {"model":"cryptand:block/peripheral_helm/block_up","y":180},
+    "facing=west,on_floor=true": {"model":"cryptand:block/peripheral_helm/block","y":270},
+    "facing=west,on_floor=false": {"model":"cryptand:block/peripheral_helm/block_up","y":270}
+  }
+}

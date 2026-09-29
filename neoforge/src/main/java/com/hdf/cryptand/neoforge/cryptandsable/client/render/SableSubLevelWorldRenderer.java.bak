@@ -1,0 +1,159 @@
+/**
+ * ===== 亚层物理化结构渲染器（客户端，2026-08-31） =====
+ *
+ * 参考原版 sable 的 VanillaSingleSubLevelRenderData 渲染思路：
+ *  亚层方块按【锚点位姿】变换绘制。位姿来自核心位姿快照（SableClientRenderModule.pose），
+ *  方块数据来自客户端镜像（SableSubLevelRenderData.blocks）。
+ *
+ * 渲染方式（简化版）：RenderLevelStageEvent（AFTER_TRANSLUCENT_BLOCKS）+
+ *  ModelBlockRenderer.tesselateBlock 逐块渲染——比原版 Chunked 渲染简单但功能等价：
+ *  每个方块视为独立 model，按位姿（平移+旋转）变换到世界坐标。
+ *
+ * 位姿来源关系：
+ *  - 服务端物理化时记录 anchor（世界坐标）；位姿快照 position 以 anchor 为初始位置。
+ *  - 渲染：pose.position（快照位置）为锚定位移；方块偏移 = block 相对 anchor。
+ *  - 旋转：pose.orientation（快照四元数）应用于锚定位移。
+ */
+package com.hdf.cryptand.neoforge.cryptandsable.client.render;
+
+import com.hdf.cryptand.Cryptand;
+import com.hdf.cryptand.neoforge.cryptandsable.api.message.SableMessages;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.block.ModelBlockRenderer;
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
+import org.joml.Matrix4f;
+import org.joml.Quaterniond;
+import org.joml.Quaternionf;
+import org.joml.Vector3d;
+
+import java.util.List;
+
+@EventBusSubscriber(modid = Cryptand.MOD_ID, value = Dist.CLIENT)
+public final class SableSubLevelWorldRenderer {
+
+    private SableSubLevelWorldRenderer() {
+    }
+
+    /** 复用实例（懒初始化：首次渲染时创建；避免服务端类加载时 Minecraft.getInstance() NPE）。 */
+    private static ModelBlockRenderer modelRenderer;
+
+    /** 亚层光照包装（每次渲染 setup；邻居 AIR + 全局位置采光）。 */
+    private static final SableSubLevelBlockAndTintGetter TINT_GETTER = new SableSubLevelBlockAndTintGetter();
+
+    private static ModelBlockRenderer modelRenderer() {
+        if (modelRenderer == null) {
+            modelRenderer = new ModelBlockRenderer(Minecraft.getInstance().getBlockColors());
+        }
+        return modelRenderer;
+    }
+
+    @SubscribeEvent
+    public static void onRenderLevel(RenderLevelStageEvent event) {
+        if (event.getStage() != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) return;
+
+        final Minecraft mc = Minecraft.getInstance();
+        final MultiBufferSource.BufferSource buffers = mc.renderBuffers().bufferSource();
+        final Vec3 cam = event.getCamera().getPosition();
+
+        for (SableSubLevelRenderData data : SableClientRenderModule.INSTANCE.allSubLevels()) {
+            // 空/无方块跳过
+            if (data.blocks().isEmpty()) continue;
+
+            // 亚层位姿：优先取核心位姿快照（物理运动后），取不到则用初始锚
+            SableMessages.PoseSnapshot ps = SableClientRenderModule.INSTANCE.pose(data.runtimeId());
+            double px, py, pz;
+            double qx = 0, qy = 0, qz = 0, qw = 1;
+            if (ps != null) {
+                px = ps.px(); py = ps.py(); pz = ps.pz();
+                qx = ps.qx(); qy = ps.qy(); qz = ps.qz(); qw = ps.qw();
+            } else {
+                px = data.anchor().getX() + 0.5; py = data.anchor().getY() + 0.5; pz = data.anchor().getZ() + 0.5;
+            }
+
+            renderSubLevel(data, px, py, pz, qx, qy, qz, qw, event.getPoseStack(), buffers, cam);
+        }
+        buffers.endBatch(RenderType.solid());
+    }
+
+    /**
+     * 渲染单个亚层：遍历方块，按位姿变换绘制。
+     *
+     * <p>位姿变换：先把方块从"局部偏移"搬到"锚点+旋转"位置，再减去相机。
+     * 旋转用四元数（compose 后乘到渲染矩阵）。
+     */
+    private static void renderSubLevel(SableSubLevelRenderData data,
+                                       double px, double py, double pz,
+                                       double qx, double qy, double qz, double qw,
+                                       PoseStack pose, MultiBufferSource.BufferSource buffers, Vec3 cam) {
+        final Minecraft mc = Minecraft.getInstance();
+
+        // 旋转矩阵（Quaterniond）
+        final Quaterniond rot = new Quaterniond(qx, qy, qz, qw).normalize();
+
+        for (SableSubLevelRenderData.RenderBlock block : data.blocks()) {
+            if (block.stateId() <= 0) continue;
+            // 状态 id → BlockState
+            BlockState state = net.minecraft.world.level.block.Block.BLOCK_STATE_REGISTRY.byId(block.stateId());
+            if (state == null || state.isAir()) continue;
+            if (state.getRenderShape() != RenderShape.MODEL) continue;
+
+            BakedModel model = mc.getBlockRenderer().getBlockModel(state);
+            if (model == null) continue;
+
+            float ox = block.dx(), oy = block.dy(), oz = block.dz();
+
+            pose.pushPose();
+            // 官方 VanillaSingleSubLevelRenderData 同款：光照包装 setup 使用【渲染位姿当前位置】
+            // （renderPos = 亚层位姿位置 px,py,pz），不是初始 anchor+offset——物理运动后采光跟随。
+            // 对应官方 LEVEL_WRAPPER.setup(subLevel.getLevel(), renderPos.x,y,z, singleBlockPos, state)。
+            TINT_GETTER.setup(mc.level, px, py, pz, BlockPos.ZERO, state);
+
+            // 官方 VanillaSingleSubLevelRenderData 位姿算法（2026-08-31）：
+            //   renderCOR = rot.transform(rotationPoint - blockPos)
+            //   translate(renderCOR - cam) → rotate  —— 围绕旋转点，防偏移/旋转错位
+            final double corX = px, corY = py, corZ = pz;   // 旋转点 = 亚层位姿位置
+            final Vector3d renderCOR = new Vector3d(
+                    corX - (data.anchor().getX() + ox),
+                    corY - (data.anchor().getY() + oy),
+                    corZ - (data.anchor().getZ() + oz));
+            rot.transform(renderCOR);
+            renderCOR.negate().add(px, py, pz);
+            final Matrix4f tf = new Matrix4f();
+            tf.translate((float) (renderCOR.x - cam.x), (float) (renderCOR.y - cam.y), (float) (renderCOR.z - cam.z));
+            tf.rotate(new Quaternionf(rot));
+            pose.last().pose().mul(tf);
+            pose.last().normal().rotate(new Quaternionf(rot));
+
+            // seed：每方块确定性（世界坐标 hash）——随机类型方块（草/树）不闪烁
+            final long blockSeed = state.getSeed(new BlockPos(
+                    data.anchor().getX() + block.dx(),
+                    data.anchor().getY() + block.dy(),
+                    data.anchor().getZ() + block.dz()));
+            VertexConsumer consumer = buffers.getBuffer(RenderType.solid());
+            RandomSource blockRandom = RandomSource.create(blockSeed);
+            // 2026-08-31 修复"侧面全黑"根因：tesselateBlock 的 boolean 参数是 useModelData，
+            // 不是 AO 开关！AO 由 Minecraft.useAmbientOcclusion() + BakedModel.useAmbientOcclusion()
+            // 决定——若全局 AO 开启且模型支持，会走 tesselateWithAO，AO 会查询邻居方块
+            // （我们的包装器邻居恒 AIR → 侧面 AO 全 0 → 黑）。
+            // 官方 sable 用 tesselateWithoutAO（禁 AO，恒定方向 shade 明暗）——同款修复。
+            modelRenderer().tesselateWithoutAO(TINT_GETTER, model, state, BlockPos.ZERO,
+                    pose, consumer, true, blockRandom, blockSeed,
+                    net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
+            TINT_GETTER.clear();
+            pose.popPose();
+        }
+    }
+}

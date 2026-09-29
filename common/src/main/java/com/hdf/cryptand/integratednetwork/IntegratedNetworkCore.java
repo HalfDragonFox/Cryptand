@@ -87,9 +87,16 @@ public final class IntegratedNetworkCore {
         return started;
     }
 
-    /** 停止核心：清空传输操作记录表（正在执行的操作自然完成）。 */
+    /** 停止核心：优雅关闭——拒绝新消息、等待在途操作完成，再清空记录表。
+     *  ★ 2026-09 P2-7 根因修复：此前只 clear() 不等在途操作 → 世界卸载后
+     *  核心虚拟线程上的孤儿操作仍引用已清空的图继续跑。 */
     public synchronized void stop() {
         if (async != null) {
+            try {
+                async.shutdown();
+                async.awaitIdle(5000);
+            } catch (Throwable ignored) {
+            }
             try {
                 async.clear();
             } catch (Throwable ignored) {
@@ -176,6 +183,24 @@ public final class IntegratedNetworkCore {
         submitTick(key, 1);
     }
 
+    /** 网络拆合请求（最高优先；data = TransportSplitMerge，类仿真引擎 SPLIT_MERGE） */
+    public void submitSplitMerge(Object key, TransportSplitMerge sm) {
+        ensureStarted();
+        async.submit(key, new TransportOpRequest(TransportOpKind.SPLIT_MERGE, sm));
+    }
+
+    /** 变化上报（接口/容器及参数变化；data = NetworkReport 或 List） */
+    public void submitReport(Object key, Object data) {
+        ensureStarted();
+        async.submit(key, new TransportOpRequest(TransportOpKind.REPORT, data));
+    }
+
+    /** 传输请求（多对多/点到点分配；data = TransportTransferRequest） */
+    public void submitTransfer(Object key, TransportTransferRequest req) {
+        ensureStarted();
+        async.submit(key, new TransportOpRequest(TransportOpKind.TRANSFER, req));
+    }
+
     /** 当前待处理/处理中的传输操作记录数（诊断） */
     public int pendingOperations() {
         AsyncTransportManager a = async;
@@ -217,6 +242,39 @@ public final class IntegratedNetworkCore {
     /** 累计移入在途的总量（跨步长期累计；未运行 0） */
     public double moved(Object key) {
         return coreExecutorEffective().moved(key);
+    }
+
+    /** 查询网络待写出总量（内存态；未注册 0） */
+    public double pendingWrites(Object key) {
+        TransportGraph g = coreExecutorEffective().graph(key);
+        return g == null ? 0 : g.pendingWriteTotal();
+    }
+
+    /**
+     * 查询最近传输执行表（核心模拟操作完成后产出；主线程据此对容器直接输入/输出；
+     * 未结算 null）。执行表为内存态，不存档。
+     */
+    public TransferExecutionTable executionTable(Object key) {
+        CoreTransportExecutor ce = coreExecutorEffective();
+        return ce == null ? null : ce.executionTable(key);
+    }
+
+    /** 查询网络容器信息（未注册 null） */
+    public ContainerInfo containerInfo(Object key, Object containerId) {
+        TransportGraph g = coreExecutorEffective().graph(key);
+        return g == null ? null : g.container(containerId);
+    }
+
+    /** 查询网络接口（未注册 null） */
+    public NetworkInterface interfaceInfo(Object key, Object ifaceId) {
+        TransportGraph g = coreExecutorEffective().graph(key);
+        return g == null ? null : g.interfaceAt(ifaceId);
+    }
+
+    /** 查询网络等待信息 {waitUntilStep, waitTicks, step}（未注册 null） */
+    public long[] waitInfo(Object key) {
+        TransportGraph g = coreExecutorEffective().graph(key);
+        return g == null ? null : new long[]{g.waitUntilStep(), g.waitTicks(), g.step()};
     }
 
     private CoreTransportExecutor coreExecutorEffective() {

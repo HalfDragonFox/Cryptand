@@ -34,6 +34,17 @@ public class RealMnaSolver implements Solver {
         // 2026-08-20 求解器原生开路支持：stamp 前标记开路电流源
         Solvers.markOpenCurrentSources(net);
         long t0 = System.nanoTime();
+        // ⚠ 2026-08-30 审计 U3 根因：Backward Euler 瞬态元件（电容 G=C/dt、
+        // 电感 G=dt/L）要求 dt>0——dt=0（SimClock 首次基准/节流窗口）表示
+        // 时间未流逝 → 无瞬态可解（G=C/0 数学未定义）。根因契约：dt<=0 时
+        // 【不执行瞬态求解】（状态不变），而不是给 dt 打下限——clamp 会掩盖
+        // 非法调用，且让状态在零时间步被"推进"。RealMnaSolver 当前不活跃
+        // （统一相量伪时域），本守卫为未来启用时域时定义正确语义。
+        if (net.dt <= 0) {
+            long tz = System.nanoTime() - t0;
+            return new SolveResult(new double[Math.max(net.nodeCount(), 1)],
+                    true, 0, tz, SolveMode.REAL_DC);
+        }
         int n = net.nodeCount();
         int g = net.groundNode;
 
@@ -81,14 +92,20 @@ public class RealMnaSolver implements Solver {
         }
 
         // 更新元件历史状态
+        // ⚠ 2026-08-30 审计 U3：NaN/Infinity 结果（native 求解器异常/奇异矩阵
+        // 静默产 NaN）【不 commit】——否则 vPrev/iPrev 被污染 → 网络永久失效
         for (Element e : net.elements()) {
             double va = v[e.nodeA()];
             double vb = v[e.nodeB()];
+            if (!Double.isFinite(va) || !Double.isFinite(vb)) continue;
             e.commit(va, vb, net.dt);
         }
 
         long nanos = System.nanoTime() - t0;
-        SolveResult result = new SolveResult(v, true, iter, nanos, SolveMode.REAL_DC);
+        // ⚠ 2026-08-30 审计 U3/M1：半导体工作点迭代达 MAX_ITER 未收敛 → 标记
+        // 未收敛（调用方据此不 commit/不写回）；纯线性网络恒收敛
+        boolean converged = !hasSemi || iter < MAX_ITER;
+        SolveResult result = new SolveResult(v, converged, iter, nanos, SolveMode.REAL_DC);
         // 端子测试点回填（2026-08-13 用户架构：求解后自动写端子电压，天然正确）
         TerminalRecorder.record(net, result);
         return result;

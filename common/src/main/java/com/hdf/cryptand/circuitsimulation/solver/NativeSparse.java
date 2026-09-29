@@ -1,7 +1,8 @@
 package com.hdf.cryptand.circuitsimulation.solver;
 
 /**
- * SuperLU 稀疏 LU（double complex）JNI 入口。
+ * SuperLU 稀疏 LU（double complex）JNI 入口（2026-08-30 统一底层接口后为
+ * {@link com.hdf.cryptand.math.NativeMath} 的薄代理：保留旧调用签名兼容）。
  *
  * 求解 A x = b（A 为 n×n 稀疏复矩阵，CSC 列优先），供相量（AC 复数稳态）
  * 超大型网络使用——稠密 LU 是 O(n³)，数万节点不可行；SuperLU 稀疏 LU 是
@@ -27,20 +28,52 @@ public final class NativeSparse {
      *   re/im[nnz] 非零元实/虚部；rhsRe/rhsIm[n] 右端；outRe/outIm[n] 解。
      * @return 1 成功；0 失败（调用方应回退稠密求解）
      */
-    public static native int solveComplex(int n, int nnz, int[] colPtr, int[] rowIdx,
-                                          double[] re, double[] im,
-                                          double[] rhsRe, double[] rhsIm,
-                                          double[] outRe, double[] outIm);
+    public static int solveComplex(int n, int nnz, int[] colPtr, int[] rowIdx,
+                                   double[] re, double[] im,
+                                   double[] rhsRe, double[] rhsIm,
+                                   double[] outRe, double[] outIm) {
+        try {
+            var x = com.hdf.cryptand.math.NativeMath.solveSparseComplex(
+                    n, nnz, colPtr, rowIdx, re, im, rhsRe, rhsIm);
+            if (x == null) return 0;
+            for (int i = 0; i < n; i++) {
+                outRe[i] = x[i].re;
+                outIm[i] = x[i].im;
+            }
+            return 1;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
 
     /**
      * 稀疏复求解（CSC，单精度复数 SCZ，float）。
      * 配置 enableFloatSolver=true 且 native 编译含单精度时使用。
      * @return 1 成功；0 失败（调用方回退 double SuperLU / 稠密）
      */
-    public static native int solveComplexFloat(int n, int nnz, int[] colPtr, int[] rowIdx,
-                                               float[] re, float[] im,
-                                               float[] rhsRe, float[] rhsIm,
-                                               float[] outRe, float[] outIm);
+    public static int solveComplexFloat(int n, int nnz, int[] colPtr, int[] rowIdx,
+                                        float[] re, float[] im,
+                                        float[] rhsRe, float[] rhsIm,
+                                        float[] outRe, float[] outIm) {
+        // 2026-08-30 统一门面：float 稀疏走 NativeMath（native 存在时含 SCZ；
+        // 无 SCZ 时内部回退 double 转换，结果一致）
+        try {
+            double[] dRe = new double[nnz], dIm = new double[nnz];
+            for (int i = 0; i < nnz; i++) { dRe[i] = re[i]; dIm[i] = im[i]; }
+            double[] rRe = new double[n], rIm = new double[n];
+            for (int i = 0; i < n; i++) { rRe[i] = rhsRe[i]; rIm[i] = rhsIm[i]; }
+            var x = com.hdf.cryptand.math.NativeMath.solveSparseComplex(
+                    n, nnz, colPtr, rowIdx, dRe, dIm, rRe, rIm);
+            if (x == null) return 0;
+            for (int i = 0; i < n; i++) {
+                outRe[i] = (float) x[i].re;
+                outIm[i] = (float) x[i].im;
+            }
+            return 1;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
 
     /** 由 neoforge 侧加载 DLL 成功后调用。 */
     public static void setLoaded(boolean loaded) {

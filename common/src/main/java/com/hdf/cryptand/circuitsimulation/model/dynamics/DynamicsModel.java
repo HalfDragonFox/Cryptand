@@ -122,6 +122,10 @@ public class DynamicsModel implements StateDriven {
      *  不受影响；如热扩散 addHeat、外部冲击）。返回新状态。 */
     public double addDelta(double delta) {
         if (delta == 0) return value;
+        // ⚠ 2026-08-30 审计（model L1）：NaN/Infinity 增量拒绝——Math.max/min
+        // 对 NaN 穿透（Math.max(NaN,x)=NaN）会让状态永久 NaN（一次 lossPower
+        // NaN → 温度/电荷/转速永久损坏）。非法增量直接忽略。
+        if (!Double.isFinite(delta) || !Double.isFinite(value)) return value;
         this.value = clamp(value + delta);
         return value;
     }

@@ -14,6 +14,8 @@
 
 package com.hdf.cryptand.neoforge.powergrid.device.wire;
 
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
+import com.hdf.cryptand.neoforge.cee.CeeWireBridge;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
@@ -60,20 +62,20 @@ public final class SaggingWireRegistry {
 
     /** 按类型 id 取（未注册 → null） */
     public static SaggingWireType get(String id) {
-        com.hdf.cryptand.neoforge.cee.CeeWireBridge.syncIfNeeded();
+        CeeWireBridge.syncIfNeeded();
         return id == null ? null : BY_ID.get(id);
     }
 
     /** 按实际物品取（物品绑定注册） */
     public static SaggingWireType byItem(Item item) {
-        com.hdf.cryptand.neoforge.cee.CeeWireBridge.syncIfNeeded();
+        CeeWireBridge.syncIfNeeded();
         return item == null ? null : BY_ITEM.get(item);
     }
 
     /** 按物品 id 字符串取（"powergrid:wire" 等） */
     public static SaggingWireType byItemId(String itemId) {
         if (itemId == null) return null;
-        com.hdf.cryptand.neoforge.cee.CeeWireBridge.syncIfNeeded();
+        CeeWireBridge.syncIfNeeded();
         SaggingWireType t = BY_ITEM_ID.get(itemId);
         if (t != null) return t;
         try {
@@ -137,7 +139,7 @@ public final class SaggingWireRegistry {
                 .resistancePerMeter(0.0015 * 0.5) // resistancePerItem × itemsPerMeter
                 .itemsPerMeter(0.5f)
                 .maximumLength(24f)
-                .maximumCurrent(80f)        // 额定电流
+                .maximumCurrent(200f)       // 25°C 额定电流（R 最低 → 载流最高）
                 .itemId("powergrid:wire")
                 .build());
         register(SaggingWireType.builder("iron")
@@ -148,7 +150,7 @@ public final class SaggingWireRegistry {
                 .resistancePerMeter(0.005 * 0.5)
                 .itemsPerMeter(0.5f)
                 .maximumLength(64f)
-                .maximumCurrent(80f)        // 额定电流
+                .maximumCurrent(100f)       // 25°C 额定电流（R 最高 → 载流最低）
                 .itemId("powergrid:iron_wire")
                 .build());
         register(SaggingWireType.builder("golden")
@@ -159,7 +161,7 @@ public final class SaggingWireRegistry {
                 .resistancePerMeter(0.003 * 0.5)
                 .itemsPerMeter(0.5f)
                 .maximumLength(12f)
-                .maximumCurrent(160f)       // 额定电流（2026-08-19 用户要求 ≥160A）
+                .maximumCurrent(160f)       // 25°C 额定电流（基准：2026-08-19 用户指定 ≥160A）
                 .itemId("powergrid:golden_wire")
                 .build());
         // 2026-08-22 补齐（原版 wire_types JSON 完整 6 型，此前只注册 3 型 →
@@ -172,7 +174,7 @@ public final class SaggingWireRegistry {
                 .resistancePerMeter(0.0015 * 0.5)
                 .itemsPerMeter(0.5f)
                 .maximumLength(16f)
-                .maximumCurrent(60f)
+                .maximumCurrent(130f)       // 25°C 额定电流（软绳多股：取同电阻粗线的 ~65%）
                 .itemId("powergrid:copper_cord")
                 .build());
         register(SaggingWireType.builder("insulated_copper_wire")
@@ -183,7 +185,7 @@ public final class SaggingWireRegistry {
                 .resistancePerMeter(0.0015 * 0.5)
                 .itemsPerMeter(0.5f)
                 .maximumLength(16f)
-                .maximumCurrent(70f)
+                .maximumCurrent(160f)      // 25°C 额定电流（绝缘铜，散热略差于裸铜）
                 .itemId("powergrid:insulated_copper_wire")
                 .build());
         register(SaggingWireType.builder("string_light_cord")
@@ -194,7 +196,7 @@ public final class SaggingWireRegistry {
                 .resistancePerMeter(0.0015 * 0.5)
                 .itemsPerMeter(0.5f)
                 .maximumLength(16f)
-                .maximumCurrent(60f)
+                .maximumCurrent(60f)        // 25°C 额定电流（灯串细线：最细 → 载流最低）
                 .itemId("powergrid:string_light_cord")
                 .build());
     }

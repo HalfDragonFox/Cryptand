@@ -1,0 +1,33 @@
+[package]
+name = "sable_rapier"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+marten.workspace = true
+
+fern.workspace = true
+jni.workspace = true
+colored.workspace = true
+log.workspace = true
+humantime.workspace = true
+
+rapier3d = { path = "E:/Projects/MCMDK/Cryptand/.ai_cache/rapier-0.35.3/crates/rapier3d", features = [
+    "parallel",
+] }
+#rapier3d = { version = "0.26.1", features = [ "simd-stable" ] }
+
+rayon = "1.10.0"
+dashmap = "7.0.0-rc2"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "sable_rapier"
+path = "src/lib.rs"
+
+[[bench]]
+name = "collision_benchmark"
+harness = false
+
+[dev-dependencies]
+criterion = "0.8.2"

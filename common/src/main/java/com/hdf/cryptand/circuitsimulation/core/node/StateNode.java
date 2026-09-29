@@ -78,7 +78,7 @@ public final class StateNode implements DirectSolveNode {
                 } else {
                     // 兼容旧路径：非 StateDriven 但有温度 → 走 update
                     // （lossPower 功耗 → ThermalModel 推进）
-                    c.update(va, vb, omega, ctx.nowNanos);
+                    c.update(va, vb, omega, ctx.simDt); // 仿真步长（统一）
                 }
                 // 储能电荷同步（EnergyDevice 额外动作，保持 EnergyNode 行为）
                 if (c instanceof EnergyDevice ed) {

@@ -39,6 +39,13 @@ public final class NetworkGraphStore {
     private long version;
     private long nextNetworkId = 1;
 
+    // ⚠ 2026-08-30 审计 #12：诊断日志走 System.Logger（不再 System.out.println）+
+    // 节流——原无条件打印（每次拆线触发 ENTER / 每次清空触发 CLEAR）造成性能
+    // 与日志污染；lost>0（重建丢点）是真实异常 → warn 保留可见。
+    private static final System.Logger LOG = System.getLogger("cryptand.graphstore");
+    private static volatile long gsDbgLast;
+    private static final long GS_DBG_INTERVAL_MS = 5000;
+
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     public NetworkGraphStore() {
@@ -172,7 +179,8 @@ public final class NetworkGraphStore {
      *   - 未接线也能被识别（networkOf 命中）；
      *   - 接线时经 {@link #addEdge} 正常 merge 进导线网络；
      *   - 构建器会把同方块悬空端子并入求解分量，设备元件完整建模。
-     * 幂等：全部端子已入图 → 跳过；部分已接线 → 补齐缺失端子到该端子所在网络。
+     * 幂等：全部端子已入图 → 只做"同网络"收敛；部分已接线 → 补齐缺失端子
+     * 到该端子所在网络。
      *
      * @param terminalKeys 该设备全部端子 key（如 "B12#34#0".."B12#34#3"）
      * @return 是否发生真实变化
@@ -189,7 +197,30 @@ public final class NetworkGraphStore {
                 if (existing == null) { all = false; continue; }
                 if (n == null) n = existing;
             }
-            if (all) return false;
+            if (all) {
+                // ===== 2026-09-15 修复"重进世界后电路无功率 / 调参不更新"=====
+                // 全部端子已在图中，【不等于】它们已经同属一个网络。
+                // 世界重载时 WireSavedData 先按 edges 恢复导线端点 → 同一设备的
+                // 端子各自落在【不同的导线分量】里（每个分量只含该设备的一个端子，
+                // 例如 A#1-B#0 一个分量、A#0-B#1 另一个分量）⇒ 构建器的"设备端子簇
+                // 扩展"拿不到成对端子 ⇒ 设备元件根本无法组装 ⇒ 无功率；同时也没有
+                // ParamSource 注册 ⇒ 调参永不刷新。用户"剪线重放就好"正是因为
+                // 它重新走了 addEdge/addDevice 的合并路径。
+                // 这里补齐语义：把它们收敛到同一网络（幂等）。端子间【仍然无边】
+                // （不导电短路），只是同属一个分量 —— 与厂商语义一致。
+                for (String k : terminalKeys) {
+                    WireNetwork other = byPoint.get(k);
+                    if (other == null || other == n) continue;
+                    java.util.List<WirePoint> otherPoints =
+                            new ArrayList<>(other.points());
+                    n.merge(other);
+                    for (WirePoint p : otherPoints) byPoint.put(p.key, n);
+                    networks.remove(other);
+                    changed = true;
+                }
+                if (changed) version++;
+                return changed;
+            }
             if (n == null) {
                 n = new WireNetwork(nextNetworkId++);
                 networks.add(n);
@@ -384,14 +415,19 @@ public final class NetworkGraphStore {
             for (String k : byPoint.keySet()) {
                 allPoints.add(new WirePoint(k));
             }
-            // 诊断（2026-08-22 无条件，定位图被清空）：进入时图状态
+            // 诊断（2026-08-22 定位图被清空）：进入时图状态（#12：logger+节流）
             try {
-                StackTraceElement[] st = Thread.currentThread().getStackTrace();
-                String caller = st.length > 3
-                        ? st[3].getClassName() + "#" + st[3].getMethodName() : "?";
-                System.out.println("[GraphStore] ensureComponentNetworks ENTER nets="
-                        + networks.size() + " allPoints=" + allPoints.size()
-                        + " byPoint=" + byPoint.size() + " by " + caller);
+                long now = System.currentTimeMillis();
+                if (now - gsDbgLast > GS_DBG_INTERVAL_MS) {
+                    gsDbgLast = now;
+                    StackTraceElement[] st = Thread.currentThread().getStackTrace();
+                    String caller = st.length > 3
+                            ? st[3].getClassName() + "#" + st[3].getMethodName() : "?";
+                    LOG.log(System.Logger.Level.DEBUG,
+                            "[GraphStore] ensureComponentNetworks ENTER nets={0} "
+                                    + "allPoints={1} byPoint={2} by {3}",
+                            networks.size(), allPoints.size(), byPoint.size(), caller);
+                }
             } catch (Throwable ignored) {
             }
             if (allPoints.isEmpty()) return false;
@@ -480,12 +516,18 @@ public final class NetworkGraphStore {
                     }
                 }
                 if (lost > 0 || byPoint.size() != allPoints.size()) {
-                    StackTraceElement[] st = Thread.currentThread().getStackTrace();
-                    String caller = st.length > 3
-                            ? st[3].getClassName() + "#" + st[3].getMethodName() : "?";
-                    System.out.println("[GraphStore] ensureComponentNetworks in="
-                            + allPoints.size() + " out=" + byPoint.size()
-                            + " lost=" + lost + " lostKeys=[" + ls + "] by " + caller);
+                    // #12：重建丢点是真实异常 → warn（节流）
+                    long now = System.currentTimeMillis();
+                    if (now - gsDbgLast > GS_DBG_INTERVAL_MS) {
+                        gsDbgLast = now;
+                        StackTraceElement[] st = Thread.currentThread().getStackTrace();
+                        String caller = st.length > 3
+                                ? st[3].getClassName() + "#" + st[3].getMethodName() : "?";
+                        LOG.log(System.Logger.Level.WARNING,
+                                "[GraphStore] ensureComponentNetworks in={0} out={1} "
+                                        + "lost={2} lostKeys=[{3}] by {4}",
+                                allPoints.size(), byPoint.size(), lost, ls, caller);
+                    }
                 }
             } catch (Throwable ignored) {
             }
@@ -497,13 +539,18 @@ public final class NetworkGraphStore {
     public void clear() {
         lock.writeLock().lock();
         try {
-            // 诊断（2026-08-22 定位图被清空）：打印调用者
+            // 诊断（2026-08-22 定位图被清空）：打印调用者（#12：logger+节流）
             try {
-                StackTraceElement[] st = Thread.currentThread().getStackTrace();
-                String caller = st.length > 3
-                        ? st[3].getClassName() + "#" + st[3].getMethodName() : "?";
-                System.out.println("[GraphStore] CLEAR nodes=" + byPoint.size()
-                        + " by " + caller);
+                long now = System.currentTimeMillis();
+                if (now - gsDbgLast > GS_DBG_INTERVAL_MS) {
+                    gsDbgLast = now;
+                    StackTraceElement[] st = Thread.currentThread().getStackTrace();
+                    String caller = st.length > 3
+                            ? st[3].getClassName() + "#" + st[3].getMethodName() : "?";
+                    LOG.log(System.Logger.Level.DEBUG,
+                            "[GraphStore] CLEAR nodes={0} by {1}",
+                            byPoint.size(), caller);
+                }
             } catch (Throwable ignored) {
             }
             for (WireNetwork net : networks) net.clear();

@@ -152,6 +152,17 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
      * （模拟现实：过压→绕组过载发热→过热，延时爆炸，不瞬爆）。默认 2000W。 */
     public volatile double overVoltPenaltyBaseW = 2000.0;
 
+    /**
+     * 机械过载发热基准（W）—— 2026-09-13 用户："过载只对温度有影响"。
+     *
+     * 过载额外损耗：`P_over = 基准 × (σ/σ_额定 − 1)²`（超出比例的平方增长）。
+     * 物理对应：机械过载 → 转差加大/接近堵转 → 电流上升 → 铜损 I²R 增大。
+     * 这是【过载唯一的后果通道】：转速/转矩不再受应力影响（见 advanceShaft）。
+     */
+    public volatile double overloadHeatBaseW = 2000.0;
+    /** 额定应力基准（SU；≤0 → 用 maxStress）。过载判据 σ > 本值 */
+    public volatile double ratedStressSU = 0.0;
+
     /** 设置过压惩罚基准功率（W） */
     public void setOverVoltPenaltyBaseW(double w) { if (w >= 0) overVoltPenaltyBaseW = w; }
 
@@ -202,6 +213,21 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
     public volatile double rotorSpeedRadS;
     /** 转动惯量（kg·m²） */
     public volatile double inertia = 1.0;
+
+    /**
+     * 机械能量模型（2026-09-13 用户："给电机添加能量模型，用于机械能表达，让电机
+     * 变成时域性计算，公式围绕此能量进行计算"）。
+     *
+     * 每步同步：E = ½Jω²、P_mech = T_em·ω、P_elec、P_loss —— 与 {@code EnergyModel}
+     * （电能）、{@code ThermalModel}（热）共用同一套能量语义，"电 → 机械 → 热"
+     * 的转换在数值上全部可见、可对账。
+     *
+     * ⚠ 主积分量仍是 {@link #rotorSpeedRadS}（ω），本模型只做【并行表达】：
+     *   若改以 E 为主状态（ω = √(2E/J)），原点处 dω/dE = 1/(Jω) → ∞，
+     *   启动/停机瞬间会剧烈抖动。详见 MotorEnergyModel 类注释。
+     */
+    public final com.hdf.cryptand.circuitsimulation.model.energy.MotorEnergyModel mechEnergy =
+            new com.hdf.cryptand.circuitsimulation.model.energy.MotorEnergyModel();
     /** 摩擦系数（N·m·s/rad）。2026-08-27 现实模型 b=0.05：空载稳态 252.2RPM/
      *  16143SU（≈99.5% 满速，K_E=8.58 精确自洽）；断电后摩擦滑行 τ=J/b=20s
      *  （30s 后 ~57RPM 接近停，惯性即负载消耗——现实 DC 电机）。 */
@@ -351,10 +377,13 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
     public final DynamicsModel shaftInertia;
 
     /**
-     * 断电滑行应力弛豫变量（2026-08-26 用户：空转 = 两次计算时间差 × 固定消耗）。
-     * 用 {@code DynamicsModel#advanceLinear}：每次被调直接算距上次调用的时间差 dt，
-     * 按固定每秒空转消耗（maxStress/30）线性减——不真实时间推进（非 advanceReal
-     * 指数/去重），随每次计算增减。target 恒 0（断电应力归零）。
+     * 断电滑行应力持久化变量（仅供 {@link #restoreStress} 跨重建恢复断电应力用）。
+     * ⚠ 2026-08-30 审计 M10：实际断电滑行【不由本变量推进】——advanceShaft
+     * 断电分支 dOmega=(−tLoad−b·ω)/J → ω 指数衰减 → σ=vMax×min(1,|ω|/ω_r)
+     * 随之【指数衰减】（公式涌现，物理正确：DC 电机 ~30s 惯性）。旧注释
+     * "advanceLinear 按 maxStress/30 线性减"是 2026-08-26 的历史设计，代码
+     * 从未调用 coastStress.advanceLinear（grep 确认仅 restoreStress setValue）。
+     * 本字段保留为兼容（restoreStress 读取持久化断电应力起点）。
      */
     public final DynamicsModel coastStress = new DynamicsModel(10.0, 0.0);
 
@@ -451,8 +480,9 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
             if (target > 0) {
                 w = shaftInertia.advance(target, dt);
             } else {
-                // 无外力：摩擦自由衰减（指数趋近 0）——advanceReal（时间强相关）
-                w = shaftInertia.advanceReal(0, System.nanoTime());
+                // 无外力：摩擦自由衰减（指数趋近 0）——统一仿真步长（dt——倍率
+                // 驱动；替代 advanceReal 真实时间——快轮次衰减正确）
+                w = shaftInertia.advance(0, dt);
             }
             rotorSpeedRadS = w;
             // EMF 恢复（2026-08-25）：发电机 EMF = K·ω（外部机械驱动 → 发电）
@@ -481,9 +511,23 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
             double bF = Math.max(friction, 0.001);      // b（N·m·s/rad）
             double jI = Math.max(inertia, 0.01);        // J（kg·m²）
             if (servoMode) jI = Math.max(inertia * 0.02, 0.01); // 伺服：瞬达（小惯量）
-            // 负载转矩 T_load = λ×T_rated（λ=networkStressSU/maxStress；现实恒转矩）
-            double tRated = kT * (ratedVoltage / Math.max(resistance, 1e-9)); // 启动矩
-            double tLoad = Math.min(1.0, sFb / vMax) * tRated; // λ×T_rated 负载矩
+            // ⚠ 2026-08-30 审计 U2/M1 根因：电流分母必须用【电路实际内阻】——
+            //   build() 中 EMF 源内阻 = (r>0 ? r : 1e-4)。原用 Math.max(resistance,
+            //   1e-9) 与电路不一致：resistance=0（无绕组读数）时公式按 1e-9 算 →
+            //   电流虚高 1e5 倍 → tEm 爆表 → dOmega 巨大 → ω 单步爆冲（表象
+            //   "软钳不足发散"）。根因修复：读 emfSource.seriesResistance（电路
+            //   真实内阻），公式与电路严格一致 → 电流有界、dOmega 有界、软钳足够。
+            double rEff = emfSource != null ? emfSource.seriesResistance
+                    : Math.max(resistance, 1e-4);
+            // ===== 2026-09-13 用户："过载只对温度有影响"（"没有过载会影响机械能的
+            //  选项"）=====
+            // 原实现：tLoad = min(1, networkStressSU/vMax) × tRated —— Create 网络应力
+            // （机械负载）会直接压低转速甚至堵转 ⇒ 过载参与了机械能。现已【解耦】：
+            //   · 机械能（转速/转矩）只由电气侧决定：EMF / 电流 / 摩擦 / 外部显式负载；
+            //   · 过载（应力超额定）只走【温度】通道（见本方法后段的 overloadHeatW）。
+            // tRated 仍保留作为过载发热的额定基准。
+            double tRated = kT * (ratedVoltage / Math.max(rEff, 1e-9)); // 额定矩（发热基准）
+            double tLoad = Math.max(loadTorque, 0); // 仅外部显式负载（默认 0）
             // ---- 统一公式链（一条，现实物理）----
             //  1) EMF（反电动势）= K_E·ω（带转向方向一致）
             double emfReal = kE * rotorSpeedRadS; // 带符号（方向跟随）
@@ -498,17 +542,19 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
             boolean powered = vabMag > 0.5
                     && vabMag < 5.0 * Math.max(maxVoltage, 1e-9)
                     && Double.isFinite(vabMag);
+            // （2026-09-13：原"断电时 tLoad 归零"已不需要 —— tLoad 现在只来自显式的
+            //   loadTorque，与 networkStressSU 的时序完全无关。）
             double eSign = (vabSigned >= 0) ? 1.0 : -1.0; // EMF 与端口同相
             double iReal;
             if (powered && vA != null && vE != null && emfSource != null
                     && Double.isFinite(vA.sub(vE).abs())) {
                 double eDrive = eSign * Math.abs(emfSource.amplitude); // 恒正幅值×方向
-                iReal = (vA.sub(vE).re - eDrive) / Math.max(resistance, 1e-9); // 带符号
+                iReal = (vA.sub(vE).re - eDrive) / Math.max(rEff, 1e-9); // 带符号
             } else if (!powered) {
                 iReal = 0; // 无源/断电无回路 → 摩擦滑行（惯性）
             } else {
                 iReal = (vabSigned - eSign * Math.abs(emfReal))
-                        / Math.max(resistance, 1e-9);
+                        / Math.max(rEff, 1e-9);
             }
             iFlow = iReal;
             //  3) 电磁转矩 T_em = K_T·I（带符号：正=驱动，负=发电制动）
@@ -581,6 +627,22 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
                 } catch (Throwable ignored) {
                 }
             }
+        }
+        // 2026-09-13 用户："给电机添加能量模型，用于机械能表达" —— 伪时域每步按当前
+        // 转速刷新机械能 E = ½Jω² 与机械功率 P_mech = T_em·ω（解析式、O(1)、无查表）。
+        // ω 仍由上面的 J·dω/dt 积分得到（数值理由见 energy 字段注释）。
+        mechEnergy.inertia = inertia;
+        mechEnergy.step(rotorSpeedRadS, lastOutputPowerW);
+        // ===== 2026-09-13 用户："过载只对温度有影响" =====
+        // 应力超过额定 → 【唯一】后果是额外发热：P_over = 基准 ×(σ/σ_额定 −1)²。
+        // 机械能完全不受影响（本方法前段已把 tLoad 与 networkStressSU 解耦）。
+        try {
+            double rated = (ratedStressSU > 0) ? ratedStressSU : maxStress;
+            if (thermal != null && rated > 0 && Double.isFinite(sFb) && sFb > rated) {
+                double over = sFb / rated - 1.0;
+                thermal.addHeat(overloadHeatBaseW * over * over * Math.max(dt, 0.01));
+            }
+        } catch (Throwable ignored) {
         }
         // 涌流经验模型：转速变化 → 更新内部电感（启动 L/k → 运行 L）
         applyInrush();
@@ -754,7 +816,12 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
      */
     @Override
     public double lossPower(Complex va, Complex vb, double omega) {
-        if (resistance <= 0) return 0;
+        // ⚠ 2026-08-30 审计 U2/M1 根因：与 advanceShaft 一致用电路实际内阻
+        //   （emfSource.seriesResistance = build 内阻 r>0?r:1e-4），不用
+        //   resistance（resistance=0 时电路内阻实为 1e-4，仍有 I²R 损耗）
+        double rEff = emfSource != null ? emfSource.seriesResistance
+                : Math.max(resistance, 1e-4);
+        if (rEff <= 0) return 0;
         // ⚠ 2026-08-27 五修：供电判据用电气端口电压（与 advanceShaft 一致——
         //   networkConnected 不可靠会把真实供电判成断电则不发热）；无源/断电
         //   （端口无压差）→ 0 热（摩擦滑行不发热）。
@@ -773,7 +840,7 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
             double eSign = (va.sub(vb).re >= 0) ? 1.0 : -1.0;
             double eDrive = eSign * Math.abs(emfSource.amplitude);
             double dv = vA.sub(vE).re - eDrive;
-            iPeak = Double.isFinite(dv) ? dv / resistance : 0;
+            iPeak = Double.isFinite(dv) ? dv / rEff : 0;
         } else if (z > 1e-12 && va != null && vb != null) {
             double eSign = (va.sub(vb).re >= 0) ? 1.0 : -1.0;
             double emfMag = eSign * Math.abs(emfSource == null
@@ -783,7 +850,7 @@ public class ElectroMachineModel extends CompositeModel implements EnergyDevice 
         } else {
             return 0;
         }
-        return iPeak * iPeak * resistance / 2.0;
+        return iPeak * iPeak * rEff / 2.0;
     }
 
     // ===== 能量模型（EnergyDevice：电能↔机械能统一入口） =====

@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 结果传递：任务 id → {@link CompletableFuture}（由 Dispatcher 共享的结果表），
  * 处理完 complete 结果；调用方经 future 获取（execute 同步等待 / submit 异步）。
  */
-public final class ThreadWorker implements Runnable {
+public final class ThreadWorker implements Runnable, ThreadDispatcher.TaskSink {
 
     /** 当前 JVM 是否支持虚拟线程（Java 21+） */
     private static final boolean VIRTUAL_SUPPORTED = detectVirtualThreads();
@@ -49,7 +49,7 @@ public final class ThreadWorker implements Runnable {
         }
     }
 
-    /** 队列任务：Runnable + 执行模式（普通=虚拟线程 / 独占=常驻线程） */
+    /** 队列任务：Runnable + 执行模式（普通=虚拟线程 / 独占=常驻线程）+ 优先级 */
     private static final class Job {
         final Runnable runnable;
         final TaskMode mode;
@@ -58,22 +58,45 @@ public final class ThreadWorker implements Runnable {
             this.runnable = runnable;
             this.mode = mode;
         }
+
+        /** 优先级（默认 0，越大越先） */
+        int priority() {
+            return mode != null ? mode.priority : 0;
+        }
     }
 
     private final String name;
     private final Thread thread;
-    /** 任务队列：网络求解任务包装 + 通用分发任务（温度推进等额外计算） */
-    private final BlockingQueue<Job> queue = new LinkedBlockingQueue<>();
+    /** 任务队列：优先级队列（2026-08-30 物理高优先；同优先级 FIFO），
+     *  网络求解任务包装 + 通用分发任务（温度推进等额外计算） */
+    private final BlockingQueue<Job> queue = new java.util.concurrent.PriorityBlockingQueue<>(
+            64, java.util.Comparator.comparingInt(Job::priority).reversed());
+    /** ⚠ 2026-08-30 用户：虚拟任务池【缓存睡眠】——虚拟消费者常驻循环，执行完
+     *  任务 → 队列 take 睡眠 → 下一次任务 offer 直接分配（唤醒睡眠消费者），
+     *  不再每任务 new + 销毁虚拟线程（消除创建/GC/调度开销）。 */
+    private final BlockingQueue<Job> virtualQueue =
+            new java.util.concurrent.LinkedBlockingQueue<>();
     private final AtomicInteger pending = new AtomicInteger();
     /** 累计处理任务数（调试统计：每次任务完成 +1） */
     private final java.util.concurrent.atomic.AtomicLong processed = new java.util.concurrent.atomic.AtomicLong();
+    /** 每秒窗口（2026-08-29 HUD 用：任务速率 + 虚拟线程申请速率共用同一 1s 窗口） */
+    private volatile long rateWindowNs = System.nanoTime();
+    private volatile long processedAtWindowStart;
+    private volatile double processedPerSecondCached;
+    /** 累计创建的虚拟线程数（调试统计；2026-08-29 用户：虚拟线程也显示 1s 申请量） */
+    private final java.util.concurrent.atomic.AtomicLong vtCreated = new java.util.concurrent.atomic.AtomicLong();
+    private volatile long vtAtWindowStart;
+    private volatile double vtPerSecondCached;
     /** 任务 id → 结果 future（与 ThreadDispatcher 共享） */
     private final Map<Long, CompletableFuture<ComputeResult>> results;
-    /** 本 Worker 最大管理的虚拟线程数（默认 1000，可配置；1 = 仍创建但限并发 1） */
-    private final int maxVirtualThreads;
-    /** 虚拟线程并发许可：许可耗尽 → Worker 阻塞 → 任务继续排队（用户要求语义） */
-    private final Semaphore vthreadPermits;
-    /** 当前活动虚拟线程数（调试统计） */
+    /**
+     * 本 Worker 最大管理的虚拟线程数（默认 1000，可配置；1 = 仍创建但限并发 1）。
+     * <p>2026-09-14 起<b>可下调</b>：分配器把某个名额永久划给【常驻固定线程】时同步收窄
+     * （用户定稿："可以在线程池永久移出一个虚拟线程放置在此线程常驻池那边，
+     * 并且分配从 1000 降低到 999"）—— 总量守恒，不额外多占系统资源。
+     */
+    private volatile int maxVirtualThreads;
+    /** 当前虚拟消费者数（缓存睡眠保留，调试统计） */
     private final AtomicInteger activeVirtual = new AtomicInteger();
     private volatile boolean closed;
 
@@ -83,7 +106,6 @@ public final class ThreadWorker implements Runnable {
         this.results = results;
         // 0 = 禁用虚拟线程（任务直接在 Worker 常驻线程执行）；正数 = 最大管理数
         this.maxVirtualThreads = Math.max(0, maxVirtualThreads);
-        this.vthreadPermits = new Semaphore(Math.max(1, this.maxVirtualThreads));
         // 线程名完全由构造参数决定（2026-08-14 通用化：不硬编码 mod 前缀，
         // 供其他任何 mod 复用时保持中性命名，线程名 = <分配器名>-<序号>）
         this.thread = new Thread(this, name);
@@ -97,6 +119,43 @@ public final class ThreadWorker implements Runnable {
     /** 累计处理任务数（调试统计） */
     long processed() { return processed.get(); }
 
+    /**
+     * 每秒处理任务数（调试统计；2026-08-29 线程池 HUD 用）。
+     * 惰性 1 秒窗口：距上次结算 &gt;= 1s 才重新差分，否则返回缓存值——
+     * 任何线程（含渲染线程）随意调用，开销极小且结果稳定。
+     */
+    double processedPerSecond() {
+        refreshRate();
+        return processedPerSecondCached;
+    }
+
+    /**
+     * 每秒【申请创建虚拟线程】数（2026-08-29 用户：虚拟线程也显示 1s 申请的量）。
+     * 与 {@link #processedPerSecond()} 共用同一 1s 窗口惰性差分。
+     */
+    double vtCreatedPerSecond() {
+        refreshRate();
+        return vtPerSecondCached;
+    }
+
+    /** 累计创建的虚拟线程数（调试统计） */
+    long vtCreated() {
+        return vtCreated.get();
+    }
+
+    /** 1s 窗口惰性结算（任务速率 + 虚拟线程申请速率同时更新） */
+    private void refreshRate() {
+        long now = System.nanoTime();
+        long elapsed = now - rateWindowNs;
+        if (elapsed < 1_000_000_000L) return;
+        double secs = elapsed / 1e9;
+        processedPerSecondCached = (processed.get() - processedAtWindowStart) / secs;
+        vtPerSecondCached = (vtCreated.get() - vtAtWindowStart) / secs;
+        processedAtWindowStart = processed.get();
+        vtAtWindowStart = vtCreated.get();
+        rateWindowNs = now;
+    }
+
     /** 是否空闲（休眠等待中，无任何任务） */
     boolean idle() { return pending.get() == 0; }
 
@@ -104,7 +163,8 @@ public final class ThreadWorker implements Runnable {
     String workerName() { return name; }
 
     /** 异步投递任务到本线程（空闲线程被唤醒处理；不阻塞调用方；默认普通模式=虚拟线程） */
-    void submit(ComputeTask task) {
+    @Override
+    public void submit(ComputeTask task) {
         pending.incrementAndGet();
         queue.offer(new Job(() -> {
             try {
@@ -132,7 +192,8 @@ public final class ThreadWorker implements Runnable {
     }
 
     /** 通用分发任务 + 指定执行模式（普通=虚拟线程 / 独占=常驻线程直算） */
-    CompletableFuture<Void> submitGeneric(Runnable r, TaskMode mode) {
+    @Override
+    public CompletableFuture<Void> submitGeneric(Runnable r, TaskMode mode) {
         CompletableFuture<Void> f = new CompletableFuture<>();
         pending.incrementAndGet();
         queue.offer(new Job(() -> {
@@ -160,8 +221,8 @@ public final class ThreadWorker implements Runnable {
             try {
                 Job job = queue.take(); // 空闲休眠（全部处理完 → 继续休眠）
                 try {
-                    if (job.mode == TaskMode.EXCLUSIVE) {
-                        runJob(job);          // 独占：跳过虚拟线程，直接常驻线程执行
+                    if (job.mode == TaskMode.EXCLUSIVE || job.mode == TaskMode.PHYSICS_HIGH) {
+                        runJob(job);          // 独占/物理：跳过虚拟线程，直接常驻线程执行
                     } else {
                         runJobOnVirtual(job); // 普通：走虚拟线程执行
                     }
@@ -175,37 +236,52 @@ public final class ThreadWorker implements Runnable {
     }
 
     /**
-     * 普通模式执行：虚拟线程数量未满 → 创建虚拟线程执行，否则在信号量上排队等待。
-     * 许可耗尽时 Worker 阻塞在此，队列中的任务继续排队（用户要求语义）。
+     * 普通模式执行：虚拟任务池【缓存睡眠复用】（2026-08-30 用户方案）——
+     * 虚拟消费者常驻循环（执行完 → virtualQueue.take() 睡眠 → 下一次任务
+     * offer 直接分配/唤醒），不再每任务 new + 销毁虚拟线程（消除创建/GC/
+     * 调度开销）。消费者数量懒增长至 maxVirtualThreads 上限（峰值并发，
+     * 缓存睡眠保留不缩回）。
      */
     private void runJobOnVirtual(Job job) {
         if (!VIRTUAL_SUPPORTED || maxVirtualThreads <= 0) {
             runJob(job); // JVM 不支持虚拟线程 / 已禁用 → 直算兜底（不丢任务）
             return;
         }
-        try {
-            vthreadPermits.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return; // 关闭中
-        }
-        activeVirtual.incrementAndGet();
-        try {
-            Thread.ofVirtual().name(name + "-vt").start(() -> {
-                try {
-                    runJob(job);
-                } finally {
-                    activeVirtual.decrementAndGet();
-                    vthreadPermits.release(); // 释放虚拟线程槽 → Worker 唤醒取下一个任务
-                }
-            });
-        } catch (Throwable t) {
-            // 虚拟线程创建失败（极端情况）→ 释放许可并直算兜底
-            activeVirtual.decrementAndGet();
-            vthreadPermits.release();
-            runJob(job);
+        virtualQueue.offer(job);
+        int active = activeVirtual.get();
+        while (active < maxVirtualThreads
+                && active < virtualQueue.size()
+                && activeVirtual.compareAndSet(active, active + 1)) {
+            vtCreated.incrementAndGet(); // 统计：启动的虚拟消费者数（缓存保留）
+            try {
+                Thread.ofVirtual().name(name + "-vt").start(this::virtualConsumerLoop);
+            } catch (Throwable t) {
+                // 虚拟线程创建失败（极端）→ 消费者数回退，直算兜底（不丢任务）
+                activeVirtual.decrementAndGet();
+                runJob(job);
+                return;
+            }
+            active = activeVirtual.get();
         }
     }
+
+    /** 虚拟消费者常驻循环：取任务执行 → 睡眠等待下一任务（缓存睡眠复用） */
+    private void virtualConsumerLoop() {
+        while (!closed) {
+            Job job;
+            try {
+                job = virtualQueue.take(); // 空闲睡眠（执行完 → 等下一任务直接分配）
+            } catch (InterruptedException e) {
+                if (closed) break;
+                continue;
+            }
+            try {
+                runJob(job);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+    // （旧信号量 + 每任务创建虚拟线程实现已移除——2026-08-30 缓存睡眠复用）
 
     private void runJob(Job job) {
         try {
@@ -216,7 +292,8 @@ public final class ThreadWorker implements Runnable {
     }
 
     /** 执行计算任务：NetworkSnapshot → 网络 → 求解器（Real/Complex） */
-    private static ComputeResult doSolve(ComputeTask task) {
+    /** 求解任务（包级：常驻线程 {@link PinnedWorker} 承接普通任务时复用同一份执行逻辑） */
+    static ComputeResult doSolve(ComputeTask task) {
         Network net = task.snapshot.toNetwork();
         Solver solver = com.hdf.cryptand.circuitsimulation.solver.Solvers.create(
                 task.snapshot.solveMode(), net);
@@ -232,6 +309,11 @@ public final class ThreadWorker implements Runnable {
 
     /** 本 Worker 最大管理的虚拟线程数（默认 1000，可配置） */
     int maxVirtualThreads() { return maxVirtualThreads; }
+
+    /** 调整虚拟线程上限（分配器把名额划给常驻固定线程时调用；已在跑的消费者不受影响） */
+    void setMaxVirtualThreads(int value) {
+        this.maxVirtualThreads = Math.max(0, value);
+    }
 
     /** 当前活动（执行中）虚拟线程数（调试统计） */
     int activeVirtualThreads() { return activeVirtual.get(); }

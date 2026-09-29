@@ -48,4 +48,31 @@ public interface TransportExecutor {
      * @param data Integer 帧数（null 视为 1）；可传入经合并累加的批量帧数
      */
     void executeTick(Object key, Object data);
+
+    /**
+     * 执行网络拆合（最高优先级：先定网络边界）。
+     *
+     * @param key  传输网键
+     * @param data {@link TransportSplitMerge}
+     * @return true = 已处理
+     */
+    boolean executeSplitMerge(Object key, Object data);
+
+    /**
+     * 执行变化上报（接口/容器及其参数更新）。
+     *
+     * @param key  传输网键
+     * @param data 单条 {@link NetworkReport} 或 {@code List<NetworkReport>}
+     * @return true = 已处理
+     */
+    boolean executeReport(Object key, Object data);
+
+    /**
+     * 执行传输请求（多对多/点到点分配 → 产出 EXTRACT/WRITE 结算事件 + 待写表）。
+     *
+     * @param key  传输网键
+     * @param data {@link TransportTransferRequest}
+     * @return true = 已处理
+     */
+    boolean executeTransfer(Object key, Object data);
 }

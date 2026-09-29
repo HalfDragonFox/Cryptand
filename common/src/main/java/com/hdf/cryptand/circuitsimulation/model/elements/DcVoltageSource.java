@@ -16,7 +16,10 @@ import com.hdf.cryptand.circuitsimulation.solver.MnaBuilder;
 public class DcVoltageSource extends AbstractElement {
 
     @Override public boolean isSource() { return true; }
-    public final double voltage;
+    /** ⚠ 2026-08-30 审计 M8 根因：电压从 final 改 volatile + setVoltage——
+     *  发电机/可调 DC 源的 EMF 必须随转速/励磁变化（原 final 使 GeneratorModel.
+     *  updateSpeed 无效，输出 EMF 恒初始值）。setter 发参数变化消息 → 重解。 */
+    public volatile double voltage;
     public final double seriesResistance;
 
     /** 开路标志（2026-08-23 电压源开路：一端接下游而两端无闭合回路 → 不注入，
@@ -31,6 +34,14 @@ public class DcVoltageSource extends AbstractElement {
         super(a, b);
         this.voltage = voltage;
         this.seriesResistance = Math.max(seriesResistance, 1e-9);
+    }
+
+    /** 更新电压（EMF 源/可调 DC 源）：参数变化 → 发送参数变化消息（重解不重建） */
+    public void setVoltage(double v) {
+        if (Double.compare(v, voltage) != 0) {
+            voltage = v;
+            notifyParamChanged();
+        }
     }
 
     @Override
@@ -54,14 +65,24 @@ public class DcVoltageSource extends AbstractElement {
 
     @Override
     public void stampComplex(ComplexMnaBuilder m, double omega) {
-        // 直流电压源在 AC 相量域：电压恒定（无 AC 分量）→ 对交流等效为短路，
-        // 只呈现内阻（Thevenin 内阻对 AC 是纯电阻）。电池接在 AC 网络里时
-        // 作为内阻电阻参与分压（真实物理：理想 DC 源对 AC 是零阻抗）。
+        // ⚠ 2026-08-30 审计：DC 源相量注入（DC/AC 一套计算拼图）——原实现
+        // 无条件只内阻（注释只描述 AC 语义"DC 源对 AC 短路"），DC 网络
+        // （omega<1 伪时域）也不注入 → 电池（BatteryAssembler→DcVoltageSource）
+        // 在 DC 电路里只表现为内阻、不供电。补 omega<1.0 && !openCircuit 分支：
+        // 诺顿注入 i=voltage×g（0 相位相量，DC=恒定电压），与 AcVoltageSource
+        // 的相量注入统一为"相量源"概念。AC 网络（omega>=1）行为不变（只内阻，
+        // 理想 DC 源对 AC 是零阻抗——真实物理）。
         double g = 1.0 / seriesResistance;
         m.addY(nodeA, nodeA, new Complex(g, 0));
         m.addY(nodeB, nodeB, new Complex(g, 0));
         m.addY(nodeA, nodeB, new Complex(-g, 0));
         m.addY(nodeB, nodeA, new Complex(-g, 0));
+        // DC 网络（伪时域）：注入 DC 电压为 0 相位相量（诺顿，方向 a→b）
+        if (omega < 1.0 && !openCircuit) {
+            double i = voltage * g;
+            m.addB(nodeA, new Complex(i, 0));
+            m.addB(nodeB, new Complex(-i, 0));
+        }
     }
 
     // ===== float 求解器 =====
@@ -93,11 +114,18 @@ public class DcVoltageSource extends AbstractElement {
 
     @Override
     public void stampComplexFloat(FloatComplexMnaBuilder m, double omega) {
+        // ⚠ 2026-08-30 审计：与 double 版一致——DC 网络（omega<1）注入 DC 电压
+        // （0 相位相量），AC 网络只内阻。
         float g = (float) (1.0 / seriesResistance);
         m.addY(nodeA, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(g, 0));
         m.addY(nodeB, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(g, 0));
         m.addY(nodeA, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-g, 0));
         m.addY(nodeB, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-g, 0));
+        if (omega < 1.0 && !openCircuit) {
+            float i = (float) (voltage * g);
+            m.addB(nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(i, 0));
+            m.addB(nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-i, 0));
+        }
     }
 
     @Override

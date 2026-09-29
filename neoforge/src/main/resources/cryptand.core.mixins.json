@@ -5,13 +5,10 @@
   "compatibilityLevel": "JAVA_21",
   "minVersion": "0.8",
   "client": [
-    "PlacementOverlayMixin",
-    "OscilloscopeHudMixin",
-    "CryptandValueSettingsScreenMixin"
+    "ThreadPoolHudMixin"
   ],
   "mixins": [
-    "AbstractRegistrateConcurrencyMixin",
-    "ThreadDispatchDebugMixin"
+    "AbstractRegistrateConcurrencyMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -8,8 +8,8 @@
 package com.hdf.cryptand.neoforge.powergrid.device.grounding;
 
 import com.hdf.cryptand.circuitsimulation.model.Network;
-import com.hdf.cryptand.neoforge.powergrid.device.DeviceWire;
 import com.hdf.cryptand.neoforge.powergrid.device.Assembler;
+import com.hdf.cryptand.neoforge.powergrid.device.DeviceWire;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
 public final class GroundingRodAssembler implements Assembler {

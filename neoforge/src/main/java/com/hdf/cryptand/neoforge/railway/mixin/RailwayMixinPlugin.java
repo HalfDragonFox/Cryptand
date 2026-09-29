@@ -14,9 +14,10 @@
 
 package com.hdf.cryptand.neoforge.railway.mixin;
 
+import com.hdf.cryptand.neoforge.cee.config.ConfigCee;
+import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
-import org.objectweb.asm.tree.ClassNode;
 
 import java.util.List;
 import java.util.Set;
@@ -57,14 +58,11 @@ public final class RailwayMixinPlugin implements IMixinConfigPlugin {
         // 但只读配置，不加载 Registry 类（Bootstrap 前禁止注册表访问）。
         boolean apply;
         try {
-            apply = com.hdf.cryptand.neoforge.core.config.ConfigLoad
-                    .ENABLE_CEE_SUPPORT.get();
+            apply = ConfigCee.ENABLE_CEE_SUPPORT.get();
         } catch (Throwable t) {
             apply = true;
         }
         String shortName = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
-        System.out.println("[Cryptand] RailMixin " + shortName
-                + " → " + (apply ? "INJECTED" : "SKIPPED") + " (ceeSupport=" + apply + ")");
         return apply;
     }
 }

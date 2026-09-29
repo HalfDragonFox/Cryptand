@@ -1,0 +1,6 @@
+﻿{
+  "variants": {
+    "has_floppy=false": { "model": "cryptand:block/program_loader" },
+    "has_floppy=true": { "model": "cryptand:block/program_loader_floppy" }
+  }
+}

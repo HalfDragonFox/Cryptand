@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "package": "com.hdf.cryptand.neoforge.sable.mixin.tire",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "plugin": "com.hdf.cryptand.neoforge.sable.mixin.tire.TireMixinPlugin",
+  "mixins": [
+    "WheelMountTireMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -2,10 +2,14 @@ package com.hdf.cryptand.neoforge.cee;
 
 import com.hdf.cryptand.circuitsimulation.netgraph.WireEdge;
 import com.hdf.cryptand.circuitsimulation.netgraph.WirePoint;
+import com.hdf.cryptand.neoforge.cee.config.ConfigCee;
+import com.hdf.cryptand.neoforge.simulator.config.ConfigCircuit;
+import com.hdf.cryptand.neoforge.core.wire.WireKeyUtil;
+import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireRegistry;
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
 import com.hdf.cryptand.neoforge.railway.catenary.CatenaryHolderBlock;
 import com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -39,10 +43,20 @@ public final class CeeTerminalSupport {
     /** 分离性：CEE 支持开关开启 && 仿真核心启用（CEE 端子接入自管电网的前提） */
     public static boolean ceeEnabled() {
         try {
-            if (!com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_CEE_SUPPORT.get())
-                return false;
-            return com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_CRYPTAND_SIMULATION.get()
-                    || com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_CRYPTAND_SOLVER.get();
+            // ⚠ 构造期 spec 未加载 → 预读配置文件（与运行时判定一致）
+            final boolean ceeOn = ConfigCee.SPEC.isLoaded()
+                    ? ConfigCee.ENABLE_CEE_SUPPORT.get()
+                    : com.hdf.cryptand.neoforge.core.config.ConfigLoad
+                            .preloadBoolean("cee", "enableCeeSupport", true);
+            if (!ceeOn) return false;
+            if (ConfigCircuit.SPEC.isLoaded()) {
+                return ConfigCircuit.ENABLE_CRYPTAND_SIMULATION.get()
+                        || ConfigCircuit.ENABLE_CRYPTAND_SOLVER.get();
+            }
+            return com.hdf.cryptand.neoforge.core.config.ConfigLoad
+                    .preloadBoolean("circuit", "enableCryptandSimulation", true)
+                    || com.hdf.cryptand.neoforge.core.config.ConfigLoad
+                            .preloadBoolean("circuit", "enableCryptandSolver", true);
         } catch (Throwable ignored) {
             return false;
         }
@@ -211,7 +225,7 @@ public final class CeeTerminalSupport {
             Vec3 local = terminalPos(st, pos);
             out = new Vec3(pos.getX() + local.x, pos.getY() + local.y, pos.getZ() + local.z);
         }
-        return com.hdf.cryptand.neoforge.cee.CeePoseUtil.toWorld(level, pos, out);
+        return CeePoseUtil.toWorld(level, pos, out);
     }
 
     /** 按点击世界坐标选择最近 CEE 节点（返回排序索引；失败 0） */
@@ -278,8 +292,8 @@ public final class CeeTerminalSupport {
         if (e == null) return false;
         if (CATENARY_RENDERER_ID.equals(e.rendererId)) return true;
         try {
-            com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireType wt =
-                    com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireRegistry
+            SaggingWireType wt =
+                    SaggingWireRegistry
                             .byRendererId(e.rendererId);
             return wt != null && wt.sag() <= 0.001f;
         } catch (Throwable ignored) {
@@ -293,7 +307,7 @@ public final class CeeTerminalSupport {
         try {
             int hash = p.key.indexOf('#');
             if (hash < 0) return null;
-            int[] xyz = com.hdf.cryptand.neoforge.powergrid.adapter.WireKeyUtil.xyzOf(p.key);
+            int[] xyz = WireKeyUtil.xyzOf(p.key);
             if (xyz == null) return null;
             return new BlockPos(xyz[0], xyz[1], xyz[2]);
         } catch (Throwable ignored) {

@@ -22,7 +22,7 @@
 package com.hdf.cryptand.neoforge.cee;
 
 import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireRegistry;
-import com.hdf.cryptand.neoforge.powergrid.device.wire.SaggingWireType;
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;

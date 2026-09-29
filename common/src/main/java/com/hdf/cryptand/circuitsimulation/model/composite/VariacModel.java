@@ -26,6 +26,9 @@ public class VariacModel extends CompositeModel implements ThermalDevice {
     public final double ratio;
     /** 总串联铜阻：primaryStray + mutual（Ω）——温度近似用 */
     public final double totalResistance;
+    /** 原边杂散电阻 / 互感段电阻（Ω，分铜耗计算用） */
+    public final double primaryStray;
+    public final double mutual;
     /** 温度模型（可 null） */
     public final ThermalModel thermal;
 
@@ -39,6 +42,8 @@ public class VariacModel extends CompositeModel implements ThermalDevice {
         this.ratio = ratio;
         this.totalResistance =
                 (primaryStray > 0 ? primaryStray : 0) + (mutual > 0 ? mutual : 0);
+        this.primaryStray = primaryStray;
+        this.mutual = mutual;
         this.thermal = thermal;
     }
 
@@ -62,15 +67,28 @@ public class VariacModel extends CompositeModel implements ThermalDevice {
     @Override public int nodeB() { return b; }
     @Override public ThermalModel thermal() { return thermal; }
 
-    /** 自耦绕组铜耗（简化近似）：I²·R_total/2，I = |Va−Vb|/R_total。
+    /** 自耦绕组铜耗：【内部支路电流法】——分别算流过 R_ps 与 R_mi 的真实支路
+     *  电流（nodeVoltage 注入后精确）再求和/2（平均）。
+     *  ⚠ 2026-08-30 审计 M7 根因：原用 I=|Va−Vb|/R_total（端口压差）——
+     *  自耦端口压差含理想变压器升压分量（非铜阻压降），变比≠1 时电流高估
+     *  → 假发热。内部支路电流法只算真实铜阻压降，变比无关。
      *  1:1 直通（无真实绕组）→ 0（不发热，避免 R=1e-3 时 P 爆炸）。 */
     @Override
     public double lossPower(Complex va, Complex vb, double omega) {
         if (ratio <= 0 || ratio == 1) return 0;
-        double r = totalResistance;
-        if (r <= 0) return 0;
-        double iPeak = va.sub(vb).abs() / r;
-        return iPeak * iPeak * r / 2.0;
+        double loss = 0;
+        Complex vaa = nodeVoltage(a);
+        Complex vxa = nodeVoltage(x);
+        Complex vbb = nodeVoltage(b);
+        if (vaa != null && vxa != null && primaryStray > 0) {
+            double iPs = vaa.sub(vxa).abs() / primaryStray;
+            loss += iPs * iPs * primaryStray;
+        }
+        if (vxa != null && vbb != null && mutual > 0) {
+            double iMi = vxa.sub(vbb).abs() / mutual;
+            loss += iMi * iMi * mutual;
+        }
+        return loss / 2.0;
     }
 
     @Override

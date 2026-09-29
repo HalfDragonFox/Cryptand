@@ -1,0 +1,7 @@
+{
+ "credit": "Adapted from OpenComputers (textures CC0 1.0). Cryptand soc part.",
+ "parent": "item/generated",
+ "textures": {
+  "layer0": "cryptand:item/oc/cpu2"
+ }
+}

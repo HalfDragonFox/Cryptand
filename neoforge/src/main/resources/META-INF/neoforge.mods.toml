@@ -26,6 +26,42 @@ config = "cryptand.create.mixins.json"
 [[mixins]]
 config = "cryptand.aeronautics.mixins.json"
 
+[[mixins]]
+config = "cryptand.pipez.mixins.json"
+
+[[mixins]]
+config = "cryptand.waterphysics.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.core.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.sable.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.aeronautics.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.simulated.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.offroad.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.tire.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.schematicapi.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.cee.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.powergrid.mixins.json"
+
+[[mixins]]
+config = "cryptand.sable.debug.mixins.json"
+
 [[mods]]
 modId = "cryptand"
 version = "${version}"

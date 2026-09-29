@@ -6,8 +6,8 @@
   "minVersion": "0.8",
   "client": [],
   "mixins": [
-    "CarriageMixin",
     "CarriageContraptionMixin",
+    "CarriageMixin",
     "TrainMixin"
   ],
   "injectors": {

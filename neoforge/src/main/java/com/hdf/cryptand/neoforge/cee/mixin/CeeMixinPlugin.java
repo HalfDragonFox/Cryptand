@@ -7,9 +7,9 @@
 package com.hdf.cryptand.neoforge.cee.mixin;
 
 import com.hdf.cryptand.neoforge.cee.CeeTerminalSupport;
+import org.objectweb.asm.tree.ClassNode;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
 import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
-import org.objectweb.asm.tree.ClassNode;
 
 import java.util.List;
 import java.util.Set;
@@ -53,8 +53,6 @@ public final class CeeMixinPlugin implements IMixinConfigPlugin {
             apply = false;
         }
         String shortName = mixinClassName.substring(mixinClassName.lastIndexOf('.') + 1);
-        System.out.println("[Cryptand] CeeMixin " + shortName
-                + " → " + (apply ? "INJECTED" : "SKIPPED") + " (cee=" + apply + ")");
         return apply;
     }
 }

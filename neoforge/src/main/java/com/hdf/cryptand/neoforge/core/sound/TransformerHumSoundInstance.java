@@ -12,6 +12,7 @@
  */
 package com.hdf.cryptand.neoforge.core.sound;
 
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.sounds.AbstractTickableSoundInstance;
 import net.minecraft.client.resources.sounds.SoundInstance;
@@ -44,7 +45,7 @@ public class TransformerHumSoundInstance extends AbstractTickableSoundInstance {
         this.volume = 0.0F;
         // 诊断：确认 sound event 有效（无效事件 → SoundManager 静默失败 → 无声）
         try {
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[TfHum] create pos={} event={}", pos,
                     ModdedSoundEvents.TRANSFORMER_HUM.getMainEvent());
         } catch (Throwable ignored) {
@@ -83,7 +84,7 @@ public class TransformerHumSoundInstance extends AbstractTickableSoundInstance {
                 long gt = Minecraft.getInstance().level == null
                         ? -1 : Minecraft.getInstance().level.getGameTime();
                 if ((gt & 0x7F) == 0) {
-                    com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                    CryptandNeoForge.WAF_LOGGER.info(
                             "[TfHum] tick pos={} vol={} pitch={} playing={}",
                             pos, String.format("%.2f", volume),
                             String.format("%.2f", pitch), isStopped());

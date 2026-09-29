@@ -50,6 +50,14 @@ public class IdealTransformerModel extends ThreadDispatchElement {
     private static Element[] build(int a1, int a2, int b1, int b2,
                                    double l1, double l2, double m, double ratio,
                                    int x, int y, int k) {
+        // ⚠ 2026-08-30 审计 U7 根因：ratio 非法（0/负/非有限）→ 下方 lm=m/n
+        // 与 IdealTransformer 的 1.0/n 均产生 Infinity → MNA 约束行 NaN/奇异。
+        // 在 super() 参数求值时拒绝非法输入（fail-fast，非 clamp——静默掩盖
+        // 会让异常网络"看起来正常"）。装配层已保证 ratio≥1。
+        if (!Double.isFinite(ratio) || Math.abs(ratio) < 1e-12) {
+            throw new IllegalArgumentException(
+                    "ideal transformer ratio must be finite and non-zero: " + ratio);
+        }
         double n = ratio;
         double lm = m / n;                              // 磁化电感（归算原边）
         double llp = Math.max(l1 - lm, l1 * 1e-6);      // 原边漏感（下限魔法数字）

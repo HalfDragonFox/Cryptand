@@ -25,6 +25,14 @@ public class Inductor extends AbstractElement {
     public double iPrev;
     /** 伪时域节拍（s；Backward Euler 用，PhasorEngine 每节拍设置） */
     public volatile double simDt = 0.05;
+    /** 孤立/剪线电感（2026-08-30 审计 U6）：两端无闭合回路 → 开路不注入
+     *  （保持 iPrev，不假电流/不发散）。由 Solvers.markOpenCurrentSources 标记。 */
+    private volatile boolean openCircuit;
+
+    /** 求解器开路检测设置：true = 孤立/剪线 → stamp 不注入（保持 iPrev） */
+    public void setOpenCircuit(boolean open) { this.openCircuit = open; }
+
+    public boolean isOpenCircuit() { return openCircuit; }
 
     public Inductor(int a, int b, double inductance) {
         super(a, b);
@@ -46,6 +54,7 @@ public class Inductor extends AbstractElement {
 
     @Override
     public void stampReal(MnaBuilder m, double dt) {
+        if (openCircuit) return; // 孤立：开路不注入（保持 iPrev，不假电流）
         double g = dt / inductance;
         double iHist = iPrev;
         m.addG(nodeA, nodeA, g);
@@ -63,6 +72,7 @@ public class Inductor extends AbstractElement {
         // 伴随（G=dt/L + I_hist=iPrev 实部）——电感在 DC 相量下不短路
         // （ω=0 → Y=1/(jωL)=∞ 会注入超大电流 600A+），逐节拍按电流记忆演化。
         if (omega < 1.0) {
+            if (openCircuit) return; // 孤立：开路不注入（保持 iPrev）
             double g = Math.max(simDt, 1e-3) / inductance;
             Complex iHist = new Complex(iPrev, 0);
             m.addY(nodeA, nodeA, new Complex(g, 0));
@@ -83,6 +93,7 @@ public class Inductor extends AbstractElement {
 
     @Override
     public void commit(double va, double vb, double dt) {
+        if (openCircuit) return; // 孤立：保持 iPrev（磁链由状态模型管理）
         // i(t) = i(t-dt) + (dt/L)*(va-vb)
         iPrev += ((va - vb) / inductance) * dt;
     }
@@ -97,6 +108,7 @@ public class Inductor extends AbstractElement {
 
     @Override
     public void stampRealFloat(FloatMnaBuilder m, double dt, double t) {
+        if (openCircuit) return; // 孤立：开路不注入（保持 iPrev）
         float g = (float) (dt / inductance);
         float iHist = (float) iPrev;
         m.addG(nodeA, nodeA, g);
@@ -109,6 +121,21 @@ public class Inductor extends AbstractElement {
 
     @Override
     public void stampComplexFloat(FloatComplexMnaBuilder m, double omega) {
+        // ⚠ 2026-08-30 审计 U4：与 double 版 stampComplex 对齐——DC/低频
+        // （omega<1）用 Backward Euler 伴随（G=simDt/L + I_hist=iPrev）。
+        // float 版此前缺此分支 → ω=0 时 1/(0·L)=Infinity → DC 电感短路爆炸。
+        if (omega < 1.0) {
+            if (openCircuit) return; // 孤立：开路不注入（保持 iPrev）
+            float g = (float) (Math.max(simDt, 1e-3) / inductance);
+            float iHist = (float) iPrev;
+            m.addY(nodeA, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(g, 0));
+            m.addY(nodeB, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(g, 0));
+            m.addY(nodeA, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-g, 0));
+            m.addY(nodeB, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-g, 0));
+            m.addB(nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-iHist, 0));
+            m.addB(nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(iHist, 0));
+            return;
+        }
         float yv = (float) (1.0 / (omega * inductance)); // Y = 1/(jωL) = -j/(ωL)
         m.addY(nodeA, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(0, -yv));
         m.addY(nodeB, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(0, -yv));
@@ -118,6 +145,7 @@ public class Inductor extends AbstractElement {
 
     @Override
     public void commitFloat(float va, float vb, double dt) {
+        if (openCircuit) return; // 孤立：保持 iPrev
         // 状态保持 double（长期积分精度），输入电压转 float 求解
         iPrev += ((va - vb) / inductance) * dt;
     }

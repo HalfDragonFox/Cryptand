@@ -102,6 +102,7 @@ public class Capacitor extends AbstractElement {
 
     @Override
     public void stampRealFloat(FloatMnaBuilder m, double dt, double t) {
+        if (openCircuit) return; // 孤立：开路不注入（与 double 版一致）
         float g = (float) (capacitance / dt);
         float iHist = (float) (vPrev * g);
         m.addG(nodeA, nodeA, g);
@@ -114,6 +115,22 @@ public class Capacitor extends AbstractElement {
 
     @Override
     public void stampComplexFloat(FloatComplexMnaBuilder m, double omega) {
+        // ⚠ 2026-08-30 审计 U4：与 double 版 stampComplex 对齐——DC/低频
+        // （omega<1）用 Backward Euler 伴随伪时域充电（float 版此前缺此分支
+        // → DC 下电容恒开路不充电）；openCircuit 两分支都检查。
+        if (omega < 1.0) {
+            if (openCircuit) return;
+            float g = (float) (capacitance / Math.max(simDt, 1e-3));
+            float iHist = (float) (vPrev * g);
+            m.addY(nodeA, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(g, 0));
+            m.addY(nodeB, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(g, 0));
+            m.addY(nodeA, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-g, 0));
+            m.addY(nodeB, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-g, 0));
+            m.addB(nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(iHist, 0));
+            m.addB(nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(-iHist, 0));
+            return;
+        }
+        if (openCircuit) return; // 孤立：AC 也开路（与 double 版一致）
         float yv = (float) (omega * capacitance); // Y = jωC
         m.addY(nodeA, nodeA, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(0, yv));
         m.addY(nodeB, nodeB, new com.hdf.cryptand.circuitsimulation.solver.FloatComplex(0, yv));
@@ -123,6 +140,7 @@ public class Capacitor extends AbstractElement {
 
     @Override
     public void commitFloat(float va, float vb, double dt) {
+        if (openCircuit) return; // 孤立：保持 vPrev（与 double 版一致）
         vPrev = va - vb; // 状态保持 double
     }
 

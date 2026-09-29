@@ -60,9 +60,17 @@ public class GeneratorModel extends CompositeModel implements ThermalDevice {
         return els.toArray(new Element[0]);
     }
 
-    /** 更新转速（rad/s）→ 输出 EMF = ke·ω（占位；DcVoltageSource.voltage final） */
+    /**
+     * 更新转速（rad/s）→ 输出 EMF = ke·ω。
+     * ⚠ 2026-08-30 审计 M8 根因：原实现只更新 speed 字段（DcVoltageSource.
+     * voltage 是 final）→ 输出 EMF 恒初始值、updateSpeed 无效。现 DcVoltageSource
+     * 支持 setVoltage（发参数变化消息 → 重解），EMF 真正跟随转速。
+     */
     public void updateSpeed(double omegaRadPerSec) {
         this.speed = omegaRadPerSec;
+        if (outSource != null) {
+            outSource.setVoltage(Math.abs(ke * omegaRadPerSec));
+        }
     }
 
     public double outputVoltage() { return ke * speed; }

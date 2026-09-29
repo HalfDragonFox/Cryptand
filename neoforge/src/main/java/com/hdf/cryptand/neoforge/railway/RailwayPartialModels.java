@@ -1,5 +1,6 @@
 package com.hdf.cryptand.neoforge.railway;
 
+import com.hdf.cryptand.neoforge.cee.CeeTerminalSupport;
 import dev.engine_room.flywheel.lib.model.baked.PartialModel;
 import net.minecraft.resources.ResourceLocation;
 
@@ -50,7 +51,7 @@ public final class RailwayPartialModels {
      */
     private static ResourceLocation mcLoc(String path) {
         try {
-            if (com.hdf.cryptand.neoforge.cee.CeeTerminalSupport.ceeModLoaded()) {
+            if (CeeTerminalSupport.ceeModLoaded()) {
                 if (path.startsWith("cee_pantograph/"))
                     return ResourceLocation.fromNamespaceAndPath("electroenergetics",
                             "block/pantograph/" + path.substring("cee_pantograph/".length()));

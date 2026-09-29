@@ -6,6 +6,11 @@
  *   - 已安装 → 初始化联动（骨架，后续填充：飞艇/移动船体上的电力设备、
  *     电路随船移动、动力接入等）
  * 依赖为 compileOnly（不强制玩家安装）。
+ *
+ * ⚠ 2026-08-29 实锤（latest.log）：create-aeronautics-1.3.0 jar 内的 mod id 是
+ *   {@code aeronautics}（含 {:code aeronautics_bundled} 子条目），【不是】
+ *   create_aeronautics！旧 MOD_ID="create_aeronautics" 致 getModFileById 恒 null →
+ *   isLoaded() 恒 false → 全部轮子 mixin SKIPPED（应力仍 4096）。改为多别名遍历。
  */
 
 package com.hdf.cryptand.neoforge.aeronautics;
@@ -14,8 +19,13 @@ import net.neoforged.fml.loading.FMLLoader;
 
 public final class AeronauticsCompat {
 
-    /** Create: Aeronautics 的 mod id */
-    public static final String MOD_ID = "create_aeronautics";
+    /** Create: Aeronautics 的主 mod id（实测日志确认） */
+    public static final String MOD_ID = "aeronautics";
+
+    /** 兼容别名（同一 create-aeronautics jar 内的可能 mod id / 旧版命名） */
+    private static final String[] MOD_ID_ALIASES = {
+            "aeronautics", "aeronautics_bundled", "create_aeronautics"
+    };
 
     private static volatile Boolean loaded;
 
@@ -37,9 +47,19 @@ public final class AeronauticsCompat {
         return l;
     }
 
+    /** 遍历别名：任一命中即算已安装（实测：aeronautics / aeronautics_bundled）。 */
     private static boolean checkLoaded() {
         try {
-            return FMLLoader.getLoadingModList().getModFileById(MOD_ID) != null;
+            var list = FMLLoader.getLoadingModList();
+            for (String id : MOD_ID_ALIASES) {
+                try {
+                    if (list.getModFileById(id) != null) {
+                        return true;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            return false;
         } catch (Throwable t) {
             return false;
         }

@@ -28,6 +28,9 @@ public class FloatComplexMnaSolver implements Solver {
         long t0 = System.nanoTime();
         int n = net.nodeCount();
         int g = net.groundNode;
+        // ⚠ 2026-08-30 审计 M4：与 double 版一致——无接地节点时选节点 0 作
+        // 参考地（否则所有节点只挂 GMIN，解与 double 版完全不同）。
+        if (g < 0 && n > 0) g = 0;
         // 伪时域：DC(0Hz) 用等效小频率（与 ComplexMnaSolver 一致，避免电感除零）
         double omega = 2 * Math.PI * Math.max(net.frequency,
                 com.hdf.cryptand.circuitsimulation.solver.ComplexMnaSolver.DC_EQUIV_FREQ_HZ);
@@ -51,7 +54,25 @@ public class FloatComplexMnaSolver implements Solver {
 
         FloatComplex[] v = DenseFloatComplexLU.solve(m.toDense(), m.b);
 
-        // 相量模式：不做时域状态更新；保存幅值与完整相量
+        // ⚠ 2026-08-30 审计 M4：补 commit 循环（与 double 版一致）——float/double
+        // 切换时电容 vPrev/电感 iPrev 不因求解器精度不同而断档；AC(ω≥1) 跳过
+        // 状态元件（M2 同源：相量实部非瞬时电压）。
+        try {
+            boolean dcMode = omega < 1.0;
+            for (Element e : net.elements()) {
+                if (!dcMode && (e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Capacitor
+                        || e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Inductor)) {
+                    continue;
+                }
+                int a = e.nodeA(), b = e.nodeB();
+                if (a >= 0 && a < n && b >= 0 && b < n) {
+                    e.commitFloat(v[a].re, v[b].re, Math.max(net.dt, 1e-3));
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+
+        // 相量模式：保存幅值与完整相量
         double[] vd = new double[n];
         Complex[] vc = new Complex[n];
         for (int i = 0; i < n; i++) {

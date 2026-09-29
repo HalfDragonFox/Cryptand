@@ -1,0 +1,12 @@
+{
+  "parent": "minecraft:block/cube",
+  "textures": {
+    "particle": "cryptand:block/assembler_side",
+    "down": "cryptand:block/assembler_side",
+    "up": "cryptand:block/assembler_top",
+    "north": "cryptand:block/assembler_top",
+    "south": "cryptand:block/assembler_side",
+    "west": "cryptand:block/assembler_side",
+    "east": "cryptand:block/assembler_side"
+  }
+}

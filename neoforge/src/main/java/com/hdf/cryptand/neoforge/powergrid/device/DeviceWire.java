@@ -105,21 +105,57 @@ public final class DeviceWire {
         return -1;
     }
 
-    /** 反射调用无参方法，失败返回 null */
+    /** 反射调用无参方法，失败返回 null。
+     *  ⚠ 2026-09-13 修复（与 MotorTakeoverBase 同一类陷阱）：旧实现只沿
+     *  {@code getSuperclass()} 用 {@code getDeclaredMethod} 上溯——它【不返回
+     *  接口方法（含 default）】，而 PowerGrid 大量取值方法（resistance()、
+     *  resistance(String)、voltage()…）都定义在 {@code IElectricEntity} 接口上
+     *  → 永远找不到 → 静默返回 null（电机转速因此恒 0）。改为 类层次 → 接口
+     *  层次（含 default）→ 公开方法兜底。 */
     public static Object call(Object target, String name) {
         if (target == null) return null;
         try {
-            Class<?> c = target.getClass();
-            while (c != null) {
-                try {
-                    java.lang.reflect.Method m = c.getDeclaredMethod(name);
-                    m.setAccessible(true);
-                    return m.invoke(target);
-                } catch (NoSuchMethodException e) {
-                    c = c.getSuperclass();
-                }
-            }
+            java.lang.reflect.Method m = findNoArg(target.getClass(), name);
+            if (m == null) return null;
+            m.setAccessible(true);
+            return m.invoke(target);
         } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    /** 无参方法解析：类层次 → 接口层次（含 default）→ 公开方法兜底。 */
+    private static java.lang.reflect.Method findNoArg(Class<?> cls, String name) {
+        for (Class<?> c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                return c.getDeclaredMethod(name);
+            } catch (NoSuchMethodException ignored) {
+            } catch (Throwable ignored) {
+                return null;
+            }
+        }
+        for (Class<?> c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
+            java.lang.reflect.Method m = findInInterfaces(c.getInterfaces(), name);
+            if (m != null) return m;
+        }
+        try {
+            return cls.getMethod(name);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static java.lang.reflect.Method findInInterfaces(Class<?>[] ifaces, String name) {
+        if (ifaces == null) return null;
+        for (Class<?> i : ifaces) {
+            try {
+                return i.getDeclaredMethod(name);
+            } catch (NoSuchMethodException ignored) {
+            } catch (Throwable ignored) {
+                return null;
+            }
+            java.lang.reflect.Method m = findInInterfaces(i.getInterfaces(), name);
+            if (m != null) return m;
         }
         return null;
     }

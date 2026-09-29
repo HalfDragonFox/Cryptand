@@ -51,12 +51,12 @@ public final class ThermalNode implements DirectSolveNode {
             try {
                 int a = c.nodeA(), b = c.nodeB();
                 if (a < 0 || b < 0) {
-                    c.update(null, null, omega, ctx.nowNanos);
+                    c.update(null, null, omega, ctx.simDt); // 仿真步长（统一）
                     continue;
                 }
                 Complex va = a < n ? r.voltageAtComplex(net.node(a)) : null;
                 Complex vb = b < n ? r.voltageAtComplex(net.node(b)) : null;
-                c.update(va, vb, omega, ctx.nowNanos);
+                c.update(va, vb, omega, ctx.simDt); // 仿真步长（统一）
             } catch (Throwable ignored) {
                 // 单元件推进失败不炸整个网络（与旧路径一致）
             }

@@ -1,0 +1,39 @@
+[package]
+name = "sable_rapier"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+marten.workspace = true
+
+fern.workspace = true
+jni.workspace = true
+colored.workspace = true
+log.workspace = true
+humantime.workspace = true
+
+# ★ 2026-09-05 f32/f64 合并（用户：改 f64 直接切换编译）：两个精度包都作为可选依赖，
+#   由 feature 选择（默认 prec-f32）。代码统一 `use rapier3d::...`（lib.rs 用
+#   extern crate ... as rapier3d 映射）。Cargo 不支持按 feature 换 crate 名 → 用
+#   optional dep + feature 门控实现。
+rapier3d-f32 = { package = "rapier3d", path = "E:/Projects/MCMDK/Cryptand/.ai_cache/rapier-0.35.3/crates/rapier3d", optional = true, features = ["parallel"] }
+rapier3d-f64 = { package = "rapier3d-f64", path = "E:/Projects/MCMDK/Cryptand/.ai_cache/rapier-0.35.3/crates/rapier3d-f64", optional = true, features = ["parallel"] }
+rayon = "1.10.0"
+dashmap = "7.0.0-rc2"
+
+[features]
+default = ["prec-f32"]
+prec-f32 = ["dep:rapier3d-f32"]
+prec-f64 = ["dep:rapier3d-f64"]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "sable_rapier"
+path = "src/lib.rs"
+
+[[bench]]
+name = "collision_benchmark"
+harness = false
+
+[dev-dependencies]
+criterion = "0.8.2"

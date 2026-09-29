@@ -8,8 +8,10 @@ import com.hdf.cryptand.circuitsimulation.netgraph.WirePoint;
 import com.hdf.cryptand.circuitsimulation.solver.Complex;
 import com.hdf.cryptand.circuitsimulation.solver.SolveMode;
 import com.hdf.cryptand.circuitsimulation.solver.SolveResult;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkContext;
-import com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorNetworkContext;
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorNetworkContextCodec;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -65,10 +67,10 @@ public final class NetworkCacheManager {
                     n++;
                 }
             }
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[NetCache] loaded {} network cache rows", n);
         } catch (Throwable t) {
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+            CryptandNeoForge.WAF_LOGGER.warn(
                     "[NetCache] loadAll failed", t);
         }
     }
@@ -80,10 +82,10 @@ public final class NetworkCacheManager {
         try {
             List<NetworkCacheRecord> list = new ArrayList<>(LATEST.values());
             db.saveNetworkCachesAsync(list);
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[NetCache] save {} cache rows queued (async)", list.size());
         } catch (Throwable t) {
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+            CryptandNeoForge.WAF_LOGGER.warn(
                     "[NetCache] saveAllAsync failed", t);
         }
     }
@@ -94,10 +96,10 @@ public final class NetworkCacheManager {
         try {
             List<NetworkCacheRecord> list = new ArrayList<>(LATEST.values());
             db.saveNetworkCachesSync(list);
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[NetCache] save {} cache rows (sync)", list.size());
         } catch (Throwable t) {
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+            CryptandNeoForge.WAF_LOGGER.warn(
                     "[NetCache] saveAllSync failed", t);
         }
     }
@@ -195,6 +197,9 @@ public final class NetworkCacheManager {
      *  2026-08-19 完整结构缓存：同时记录电路结构（NetworkStructureCodec 二进制
      *  base64）与 ctx 映射（blockTerminals/pointToEngine/openTerminal/段/波形
      *  JSON）——跨区块加载后直接恢复完整电路（跳过 buildContextFromGraph）。 */
+    /** 结构编码失败诊断节流（2026-09-15） */
+    private static volatile long STRUCT_DBG_LAST;
+
     public static void recordSolved(String sig, long networkId, String seedKey,
                                     double freq, PhasorNetworkContext ctx,
                                     SolveResult res) {
@@ -216,10 +221,22 @@ public final class NetworkCacheManager {
         try {
             byte[] bytes = com.hdf.cryptand.circuitsimulation.compute.NetworkStructureCodec.encode(net);
             structure = java.util.Base64.getEncoder().encodeToString(bytes);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            // 2026-09-15：原先静默吞异常 ⇒ "某些网络的电路结构从来没进过 SQLite"
+            //  完全不可见（表现为"进世界没功率/必须重建/跨区块恢复失效"）。
+            //  NetworkStructureCodec.writeComposite 目前只支持 WireComposite /
+            //  ResistorModel / CapacitorModel / InductorModel 四种，电机/变压器/灯/
+            //  加热器等一律抛 IOException。改为可见诊断（5s 节流）。
+            long nowS = System.currentTimeMillis();
+            if (nowS - STRUCT_DBG_LAST >= 5000) {
+                STRUCT_DBG_LAST = nowS;
+                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.warn(
+                        "[NetCache] struct-encode FAILED (not persisted) sig={} err={}",
+                        sig, String.valueOf(t));
+            }
         }
         try {
-            mapping = com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkContextCodec
+            mapping = PhasorNetworkContextCodec
                     .encode(ctx);
         } catch (Throwable ignored) {
         }
@@ -245,7 +262,7 @@ public final class NetworkCacheManager {
             if (net == null || net.nodeCount() != rec.nodeCount()) return null;
             if (rec.mapping() == null) return null;
             PhasorNetworkContext ctx =
-                    com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkContextCodec
+                    PhasorNetworkContextCodec
                             .decode(net, rec.mapping(), rec.frequency());
             return ctx;
         } catch (Throwable ignored) {

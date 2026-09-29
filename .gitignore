@@ -28,6 +28,7 @@ replay_pid*
 .idea/
 .proxyai/
 .vscode/
+.architectury-transformer/
 build/
 common/.gradle/
 common/build/
@@ -49,8 +50,14 @@ __pycache__/
 # AI 临时目录
 .tmp-*/
 
+# DSH 调试转储（LM 消息 dump；2026-09-14 用户确认保留原地但不入库）
+.dsh-debug/
+
 # AI 生成内容统一归档（2026-08-29：反编译/日志/脚本/架构图等一律归此目录，不入库）
 .ai_cache/
 
 # 废弃/弃置代码
 弃置区/
+
+# 文件快照/撤回暂存（undo.ps1 的快照存储，不入库，2026-09-01）
+.undo/

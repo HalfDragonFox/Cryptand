@@ -1,0 +1,18 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.waterphysics.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.waterphysics.mixin.WaterphysicsMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [],
+  "mixins": [
+    "FlowingFluidTickMixin",
+    "BucketItemMixin",
+    "PistonBaseBlockMixin",
+    "FallingBlockEntityMixin",
+    "LiquidBlockMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

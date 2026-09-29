@@ -25,6 +25,11 @@ dependencies {
     // Remove the next line if you don't want to depend on the API
     modApi "dev.architectury:architectury-fabric:${rootProject.architectury_version}"
 
+    // COM 串口对接库（2026-09-08）：include = jar-in-jar 随 mod 分发（dev 运行经 common 传递依赖）
+    implementation(include("com.fazecast:jSerialComm:${rootProject.serialcomm_version}"))
+    // 方向盘 DirectInput8 后端（2026-09-08）：JNA 随 mod 分发
+    implementation(include("net.java.dev.jna:jna:${rootProject.jna_version}"))
+
     common(project(path: ":common", configuration: "namedElements")) { transitive false }
     shadowCommon(project(path: ":common", configuration: "transformProductionFabric")) { transitive false }
 }

@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "com.hdf.cryptand.neoforge.pipez.mixin",
+  "plugin": "com.hdf.cryptand.neoforge.pipez.mixin.PipezMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "PipezNeighborMixin",
+    "PipezTakeoverMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

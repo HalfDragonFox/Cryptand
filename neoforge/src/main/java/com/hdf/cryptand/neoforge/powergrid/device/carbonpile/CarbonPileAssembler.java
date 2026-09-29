@@ -11,12 +11,12 @@ package com.hdf.cryptand.neoforge.powergrid.device.carbonpile;
 import com.hdf.cryptand.circuitsimulation.model.Network;
 import com.hdf.cryptand.circuitsimulation.model.composite.CompositeModel;
 import com.hdf.cryptand.circuitsimulation.model.composite.MotorModel;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceThermalStore;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkContext;
-import com.hdf.cryptand.neoforge.powergrid.device.SourceCacheAssembler;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCache;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCacheRegistry;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceThermalStore;
+import com.hdf.cryptand.neoforge.powergrid.engine.PhasorNetworkContext;
 import com.hdf.cryptand.neoforge.powergrid.device.DeviceWire;
-import com.hdf.cryptand.neoforge.powergrid.device.Assembler;
+import com.hdf.cryptand.neoforge.powergrid.device.cache.SourceCacheAssembler;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
@@ -74,10 +74,10 @@ public final class CarbonPileAssembler implements SourceCacheAssembler {
                                         List<PhasorNetworkContext.ParamSource> paramSources) {
         if (!(cm instanceof MotorModel mm)) return;
         paramSources.add(() -> {
-            com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache c =
-                    com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCacheRegistry.get(pos);
+            DeviceCache c =
+                    DeviceCacheRegistry.get(pos);
             if (c == null) return;
-            com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache.Data d = c.in();
+            DeviceCache.Data d = c.in();
             if (d.resistance > 0) mm.setResistance(d.resistance); // 值变化 → 重解
         });
     }

@@ -17,8 +17,22 @@ dependencies {
 
     implementation("org.xerial:sqlite-jdbc:${rootProject.sqlite_version}")
 
+    // COM 串口对接库（2026-09-08，jSerialComm 跨平台后端；common 纯 Java 零 MC 依赖）
+    implementation("com.fazecast:jSerialComm:${rootProject.serialcomm_version}")
+
+    // 方向盘对接库（2026-09-08，JNA 直调 dinput8.dll DirectInput8——罗技力反馈方向盘）
+    implementation("net.java.dev.jna:jna:${rootProject.jna_version}")
+
     implementation(annotationProcessor("io.github.llamalad7:mixinextras-common:0.4.1"))
     implementation(annotationProcessor('com.google.code.gson:gson:2.11.0'))
+}
+
+// ⚠ 2026-08-30 引擎独立自测（软件仿真器可用性验证——纯 Java 无 MC）
+tasks.register('engineSelfTest', JavaExec) {
+    group = 'verification'
+    description = '运行引擎独立自测（EngineSelfTest——电池+灯+导线网络求解验证）'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.engine.EngineSelfTest'
 }
 
 publishing {
@@ -41,6 +55,813 @@ tasks.register('runCouplerTest', JavaExec) {
     description = 'Run transformer half-model coupler convergence self test'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.hdf.cryptand.circuitsimulation.solver.TransformerCouplerSelfTest'
+}
+
+// SoC 沙箱内核自测（2026-09-15，纯 Java 零 MC）：
+//   ./gradlew :common:runSocTest
+// 覆盖：RV32IM 算术/访存/分支、预算化执行、M 扩展边界、非法指令、访存越界、
+//       ECALL 退出、沙箱配额、中断交付、地址映射冲突。
+tasks.register('runSocTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SoC sandbox self test (RV32IM core + memory map + interrupts, no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.SocSelfTest'
+}
+
+// 事务调度框架自测（2026-09-28，纯 Java 零 MC）：
+//   ./gradlew :common:runTxnTest
+// 覆盖：申明集合严格升序校验 / 池稳态零分配与溢出退化 GC / 区块锁全得或全不得（绝不部分持有）/
+//       双缓冲滞后一拍 / 先读后写相位隔离（读未清零不写、写未清零不碰主线程）/ 同区块写互斥。
+tasks.register('runTxnTest', JavaExec) {
+    group = 'verification'
+    description = 'Run transaction scheduler self test (double buffer + staged read/write + chunk locks, no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.core.concurrent.TxnSelfTest'
+    jvmArgs = ['-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8']   // 中文断言名在 GBK 控制台会乱码
+}
+
+// C++ 内核一致性自测（2026-09-17，用户"一步到 C++ 内核"后的回归闸门）：
+//   ./gradlew :common:runNativeKernelTest
+// 覆盖：native 解释器 vs 纯 Java 解释器（同固件同装配）→ 指令数 / PC / 寄存器 / 设备寄存器 逐项比对，
+//       并确认 MMIO 事务确实由 Java 侧兑现（设备仍然是 Java 对象，soc 子包零改动）。
+// DLL 缺失时打印 SKIP 正常退出（无 native 环境不阻塞）。
+tasks.register('runNativeKernelTest', JavaExec) {
+    group = 'verification'
+    description = 'Run native (C++) RV32 kernel consistency self test against the Java kernel'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.NativeKernelSelfTest'
+    workingDir = rootProject.projectDir
+    systemProperty 'cryptand.rv32.lib', rootProject.file('neoforge/run/config/cryptand/engines/cryptand_rv32.dll').absolutePath
+}
+
+// 虚拟机独立机器闸门（2026-09-28 用户定案）：
+//   ./gradlew :common:runVmIndependenceTest
+// 覆盖：① CLINT 由虚拟机构建（guest 零 MMIO 拿到 tick、宿主不下发中断）
+//       ② 周期管理由虚拟机自己算（每秒配额，跑满即睡）③ 心跳断了指定时间 ⇒ 自己暂停 / 再来心跳自动恢复
+tasks.register('runVmIndependenceTest', JavaExec) {
+    group = 'verification'
+    description = 'Run VM independence self test: in-VM CLINT, self-paced cycles, heartbeat watchdog'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.VmIndependenceSelfTest'
+    workingDir = rootProject.projectDir
+    systemProperty 'cryptand.rv32.lib', rootProject.file('neoforge/run/config/cryptand/engines/cryptand_rv32.dll').absolutePath
+}
+
+// 沙箱（自驱动虚拟机）自测（2026-09-17，纯 Java 零 MC）：
+//   ./gradlew :common:runSandboxTest
+// 覆盖用户定稿的沙箱语义：配置一次后按**内部时钟自动运行**、断点命中、单步、
+// 设备访问走**消息**（MSG_MMIO 浮上来由 Java 兑现）、ECALL 停机、pinned 线程归属。
+tasks.register('runSandboxTest', JavaExec) {
+    group = 'verification'
+    description = 'Run Cryptand sandbox (self-driven VM) self test: internal clock, breakpoints, messages'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.SandboxVmSelfTest'
+    workingDir = rootProject.projectDir
+    systemProperty 'cryptand.rv32.lib', rootProject.file('neoforge/run/config/cryptand/engines/cryptand_rv32.dll').absolutePath
+}
+
+// 盘文件系统自测（2026-09-18，纯 Java 零 MC；cryptand-fs-design.md §7 阶段 1 的验证）：
+//   ./gradlew :common:runFsTest
+// 覆盖：路径解析（jail/越出根/非法字符）、CRUD 与 list 语义（子目录尾斜杠、不存在返回 null 而非空数组）、
+//       句柄（随机 id / EOF=-1 / 写句柄独占 / 打开中不可删 / 上限 16 / 关闭后抛错）、
+//       配额三处检查点（mkdir / open 写类 / write）与"每次重算 used"的回落、只读盘、Mode 映射。
+tasks.register('runFsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run disk file system self test (path jail, CRUD, handles, quota, read-only; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.FsSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 组件桥 ⇄ 文件系统自测（2026-09-18，纯 Java 零 MC；cryptand-fs-design.md §7 阶段 2.1）：
+//   ./gradlew :common:runOcFsBridgeTest
+// 覆盖：邮箱投递/认领/兑现与 SEQ、**出方向缓冲区**（FS_READ / FS_LIST 写进固件自带的缓冲、
+//       result0 = 实际写入量、容量不足不超写）、非出方向方法不碰缓冲、入方向缓冲照旧。
+tasks.register('runOcFsBridgeTest', JavaExec) {
+    group = 'verification'
+    description = 'Run OC bridge <-> filesystem self test (mailbox + outbound buffer; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.oc.OcFsBridgeSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 闸门输出统一 UTF-8（2026-09-25）：断言名是中文，默认平台编码（Windows = GBK）写进日志后
+// 任何按 UTF-8 读日志的工具都只能看到乱码 —— 诊断时"看不见断言名"等于没有断言名。
+tasks.withType(JavaExec).configureEach {
+    jvmArgs('-Dfile.encoding=UTF-8', '-Dstdout.encoding=UTF-8', '-Dstderr.encoding=UTF-8')
+}
+
+// 屏幕帧同步自测（2026-09-28，纯 Java 零 MC）：
+//   ./gradlew :common:runScreenFrameSyncTest
+// 覆盖：服务器侧图像合成（TEXT 口径 = ScreenTextLayer、GRAPHICS = 设备读回）、脏行区间合并、
+//       距离→采样步长（2 的幂/单调/夹紧）、每台机器回帧上限（默认 60 fps）。
+tasks.register('runScreenFrameSyncTest', JavaExec) {
+    group = 'verification'
+    description = 'Run screen frame sync self test (image composer + distance sampling + rate limiter; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenFrameSyncSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// LOD 核心自测（2026-09-29，纯 Java 零 MC）：
+//   ./gradlew :common:runLodCoreTest
+// 覆盖：2D 档位（2 的幂/单调/夹紧，口径来自 ScreenSamplingPolicy）、3D 距离分段、能力位、
+//       后端注册表的选择与**回退日志可见**。
+// 屏幕帧指标自测（2026-09-29，纯 Java 零 MC）：
+//   ./gradlew :common:runScreenFrameMetricsTest
+// 覆盖：计数/平均值/摘要格式/重置/负值夹紧（指标必须"不会把均值带偏"）。
+tasks.register('runScreenFrameMetricsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run screen frame metrics self test (counters + averages + summary; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenFrameMetricsSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 合成器离线基准（2026-09-29，纯 Java 零 MC）：量 TEXT 模式整屏合成成本。
+//   ./gradlew :common:runScreenComposerBenchmark
+// 真机指标显示"合成 >> 打包"，此基准用来在无 MC 环境下量稳态成本、对比优化前后。
+tasks.register('runScreenComposerBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Benchmark ScreenImageComposer.composeText (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenImageComposerBenchmark'
+    workingDir = rootProject.projectDir
+}
+
+// 帧上线成本离线基准（2026-09-29，纯 Java 零 MC）：zlib 压缩一帧 400x256 ARGB 要多久、压到多小。
+//   ./gradlew :common:runScreenFrameWireBenchmark
+tasks.register('runScreenFrameWireBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Benchmark zlib cost/size of one 400x256 ARGB screen frame (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenFrameWireBenchmark'
+    workingDir = rootProject.projectDir
+}
+
+// 格级脏合成闸门（2026-09-29，纯 Java 零 MC）：静态早退 / 只重画变化格 / 未变格沿用上一帧。
+//   ./gradlew :common:runScreenImageComposerTest
+tasks.register('runScreenImageComposerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run ScreenImageComposer cell-level dirty compose self test (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenImageComposerSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 帧体压缩闸门（2026-09-29，纯 Java 零 MC）：RLE 往返等价 / 压缩率 / 压不动回落 NONE / 坏数据明确抛错。
+//   ./gradlew :common:runFrameCompressionTest
+tasks.register('runFrameCompressionTest', JavaExec) {
+    group = 'verification'
+    description = 'Run frame body compression (RLE) self test (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.FrameCompressionSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 最大显示范围闸门（2026-09-29，纯 Java 零 MC）：准入边界 + 坏配置安全默认（拒绝）。
+//   ./gradlew :common:runViewRangeLimitTest
+tasks.register('runViewRangeLimitTest', JavaExec) {
+    group = 'verification'
+    description = 'Run view range limit self test (boundaries + fail-closed defaults; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ViewRangeLimitSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 请求令牌桶闸门（2026-09-29，纯 Java 零 MC）：速率/突发/回补上限/时钟回退/非法配置。
+//   ./gradlew :common:runRequestTokenBucketTest
+tasks.register('runRequestTokenBucketTest', JavaExec) {
+    group = 'verification'
+    description = 'Run request token bucket self test (fake clock; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.RequestTokenBucketSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 任务派发框架闸门（2026-09-29，纯 Java 零 MC）：只读并行 / 写互斥 / 主线程 / 异常传播。
+//   ./gradlew :common:runTaskDispatcherTest
+tasks.register('runTaskDispatcherTest', JavaExec) {
+    group = 'verification'
+    description = 'Run AutoTaskDispatcher self test (parallel read / exclusive write / main thread; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.dynamic.task.AutoTaskDispatcherSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 任务派发门面闸门（2026-09-29，纯 Java 零 MC）：Tasks.read/write/mainThread 一行式用法。
+//   ./gradlew :common:runTasksFacadeTest
+tasks.register('runTasksFacadeTest', JavaExec) {
+    group = 'verification'
+    description = 'Run Tasks facade self test (one-liner read/write/mainThread; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.dynamic.task.TasksFacadeSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// LOD 降采样闸门（2026-09-29，纯 Java 零 MC）：step=1 恒等 / 左上角口径 / 非整除不越界 / 坏输入报错。
+//   ./gradlew :common:runLodDownsampleTest
+tasks.register('runLodDownsampleTest', JavaExec) {
+    group = 'verification'
+    description = 'Run Lod2D downsample self test (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.lod.Lod2DDownsampleSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// LOD 距离阶梯闸门（2026-09-29，纯 Java 零 MC）：边界/越界/乱序报错/百分比换步长/解析。
+//   ./gradlew :common:runLodStairsTest
+tasks.register('runLodStairsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run LodStairs (distance ladder) self test (no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.lod.LodStairsSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runLodCoreTest', JavaExec) {
+    group = 'verification'
+    description = 'Run LOD core self test (2D/3D levels + backend registry fallback; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.lod.LodSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// LOD 后端链条自测（2026-09-29，纯 Java 零 MC）：自实现兜底（builtin 永远垫底）
+//   + 配置链"优先使用第一有效"（未登记/不可用/不支持/返回 null 逐项跳过且日志可见）
+//   ./gradlew :common:runLodBackendChainTest
+tasks.register('runLodBackendChainTest', JavaExec) {
+    group = 'verification'
+    description = 'Run LOD backend chain self test (builtin fallback + first-valid chain; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.lod.LodBackendChainSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// CPU 制作工厂自测（2026-09-29，纯 Java 零 MC）：申请句柄 → 输入参数 / 获取组件表 / 使用默认组件表
+//   → 校验 → 输出最终 CPU；再次编辑走"申请句柄 + 导入"；停止制作后句柄必须被工厂销毁。
+//   ./gradlew :common:runChipFactoryTest
+tasks.register('runChipFactoryTest', JavaExec) {
+    group = 'verification'
+    description = 'Run chip factory self test (draft handles, module table, import, build, destroy; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.factory.ChipFactory'
+    workingDir = rootProject.projectDir
+}
+
+// 设备链路（硬件连接器）自测（2026-09-28，纯 Java 零 MC）：
+//   ./gradlew :common:runLinkTest
+// 覆盖：协议优先级协商（交集里 priority 最小、与参数顺序无关、无交集接不上）、
+//       端点种类校验（屏 ↔ 宿主）、一屏一条链路（改接/重连）、通道预算（一通道一屏）。
+tasks.register('runLinkTest', JavaExec) {
+    group = 'verification'
+    description = 'Run device link self test (protocol priority + link table + channel budget; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.link.SocLinkSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 硬件连接画布（EDA 风格）几何自测（2026-09-29，纯 Java 零 MC）：
+//   ./gradlew :common:runHwCanvasTest
+// 覆盖：器件分列摆位、接口点贴边与按种类上色、同色才可连、折线走线首尾相接、
+//       点/器件/线的命中测试、拖动夹画布、位置编码往返（坏数据不抛）。
+// 芯片蓝图设计器·设计态自测（2026-09-29，纯 Java 零 MC）：
+//   ./gradlew :common:runChipDesignTest
+// 覆盖：通用点增删（最小空号复用）、模块拖入去重/移动、模块端口 ↔ 通用点连线、
+//       一条线 1 点、超点数拒绝并给中文原因、通用点独占、拆点/拆模块/断线退回点数、改预算校验。
+tasks.register('runChipDesignTest', JavaExec) {
+    group = 'verification'
+    description = 'Run chip blueprint design layout self test (generic points + modules + wires + point budget; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ChipDesignSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runHwCanvasTest', JavaExec) {
+    group = 'verification'
+    description = 'Run hardware wiring canvas layout self test (EDA geometry: layout + dots + wires; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.link.HwCanvasLayoutSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 动态资源框架契约测试（2026-09-29，纯 Java 零 MC）：
+//   ./gradlew :common:runDynamicFrameworkTest
+// 覆盖：加载/装配/释放、后缀分派、多核心命中、增量扫描、mtime 重载、删除卸载、
+//       坏包隔离、API 版本拒绝（未加载类）、依赖缺失/存在、attach 抛异常回滚、
+//       同 id 先装后卸、按核心/全量重载、原子发布、并发 scan 幂等、观测字段、
+//       shutdown 全卸载、tick/资源重载转发、卸载后 jar 句柄释放。
+tasks.register('runDynamicFrameworkTest', JavaExec) {
+    group = 'verification'
+    description = 'Run dynamic resource framework contract self test (real jars, no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.dynamic.core.DynamicFrameworkSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 键盘输入链路自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runOcKeyboardTest
+// 覆盖：OC 键名 → 固件 shell 认得的字节（对齐 console.c 的解析）、文本 UTF-8、
+//       UART RX 往返（LSR.DR / RBR / available / rxBytes）与 FIFO 溢出标志。
+tasks.register('runOcKeyboardTest', JavaExec) {
+    group = 'verification'
+    description = 'Run keyboard input self test (key map + UART RX round trip; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.oc.OcKeyboardSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 固件 shell 行编辑自测（2026-09-25，纯 Java 零 MC）：
+//   ./gradlew :common:runShellLineEditTest
+// 跑**真 cryptand-os.bin**（离线沙箱装配同构板），假组件总线把 gpu.blit 截成屏幕来断言：
+// 输入/回车/退格、←→/Home/End 行内编辑、Delete（ESC [ 3 ~）、未识别 ESC 序列**整段丢弃**、
+// ↑↓ 历史（含 ↓ 回草稿）、单独 ESC 的超时复位。
+tasks.register('runShellLineEditTest', JavaExec) {
+    group = 'verification'
+    description = 'Run firmware shell line-edit self test (real cryptand-os.bin; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.os.ShellLineEditSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 文件系统端到端自测（2026-09-18，纯 Java 零 MC；cryptand-fs-design.md §7 阶段 3.3 的"假宿主回归"）：
+//   ./gradlew :common:runFsE2ETest
+// 覆盖：邮箱投递 → 核心组包 → FsCallDispatcher → 真 DiskFileSystem **真落盘**；
+//       READ 的出方向缓冲区 / EOF=-1 / LIST 的 NUL 分隔 / SPACE / 错误码 / RENAME。
+tasks.register('runFsE2ETest', JavaExec) {
+    group = 'verification'
+    description = 'Run filesystem end-to-end self test (mailbox -> core -> DiskFileSystem; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.FsEndToEndSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 动态盘（thin provisioning）+ 配额自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runDiskImageTest
+// 覆盖：初始 0 占用（设置 60G 不占空间）、写过的块才存在、稀疏读 0、块按需释放、
+//       disk.json 记容量/块大小（换机器插回来同尺寸）、块大小自适应、两级配额硬闸门。
+tasks.register('runDiskImageTest', JavaExec) {
+    group = 'verification'
+    description = 'Run disk image (thin provisioning) + quota self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.DiskImageSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 分区表自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runPartitionTest
+// 覆盖：未分配 = 容量 − Σ分区、两类分区（镜像块设备 / 文件夹树）、超容量 ERR_NO_SPACE、
+//       disk.json 持久化往返、删分区后编号连续与目录清理、卷标格式可改。
+tasks.register('runPartitionTest', JavaExec) {
+    group = 'verification'
+    description = 'Run disk partition table self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.DiskPartitionSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 格式化工具自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runFormatTest
+// 覆盖：容量→FAT 类型规则、FAT12 引导扇区/双 FAT/空根目录（由自带的独立解析器按规范读回）、
+//      幂等、重新格式化释放空间、类型与分区不匹配时明确报错、文件夹分区格式化。
+tasks.register('runFormatTest', JavaExec) {
+    group = 'verification'
+    description = 'Run disk formatter self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.DiskFormatterSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// FAT 驱动自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runFatTest
+// 覆盖：FAT12/16/32 三类型同一套用例（短名/LFN/子目录/跨簇大文件/覆盖释放/删除回收/错误码/重开持久）。
+tasks.register('runFatTest', JavaExec) {
+    group = 'verification'
+    description = 'Run FAT12/16/32 driver self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.FatSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 盘全链路沙盒自测（2026-09-18，纯 Java 零 MC，用户要求"沙盒跑一遍"）：
+//   ./gradlew :common:runDiskPipelineTest
+// 覆盖：老盘文件夹树 → 格式化 IMAGE+FAT12 → 挂载分派 → 读写 → 重开持久 → 未格式化明确失败 →
+//      FOLDER 分区文件树 → 容量/类型硬约束 → 分区表账目。
+tasks.register('runDiskPipelineTest', JavaExec) {
+    group = 'verification'
+    description = 'Run disk pipeline (partition + format + mount dispatch) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.DiskPipelineSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 多卷 = 分区承载功能沙盒自测（2026-09-24；用户："完整 os 可以支持通过分区来实现功能"）：
+//   ./gradlew :common:runVolumesTest
+// 覆盖：label → 角色（SYS/USR/HOME/DATA/RAW）、多分区挂载成多卷、卷间真隔离、重开持久、
+//      系统卷认 label 不认顺序、未格式化分区说明原因且明确失败、无分区老盘回落文件夹树。
+// 盘地址沙盒自测（2026-09-24）：地址同时是数据组件、宿主目录名与日志标识符，
+//   生成与校验只有一份（common 的 DiskAddress）—— 并钉住"老存档 UUID 仍然合法且安全化恒等"。
+// 部件容量档位沙盒自测（2026-09-25）：EEPROM 4K..128K、存储 4K..1GB，
+//   这张表是物品注册 / 盘容量 / 命令与 AI 解析的同一份来源。
+tasks.register('runCapacitiesTest', JavaExec) {
+    group = 'verification'
+    description = 'Run part capacity tiers (EEPROM / storage) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.part.SocCapacitiesSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runAddressTest', JavaExec) {
+    group = 'verification'
+    description = 'Run disk address (generation + validation) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.DiskAddressSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 处理器档位表自测（2026-09-26）：档位表是 common 的单一来源，被物品注册 / 宿主装配 /
+// 工具显示三处共用 —— 少一档、频率写错一个 0、id 撞名这些错误在真机上只表现为"某档看不到"。
+//   ./gradlew :common:runCpuTierTest
+// 主线程 ⇄ 虚拟机 共享消息缓存区自测（2026-09-26 用户定案："定义一个缓存区，用于消息等接收"）：
+// 语义就三条 —— 发送侧持续发到上限、消费侧一次性取空、满了必须可观测（不静默丢）。
+//   ./gradlew :common:runMsgQueueTest
+tasks.register('runMsgQueueTest', JavaExec) {
+    group = 'verification'
+    description = 'Run host<->VM message ring (send-to-limit / drain-all) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.HostMessageRingSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// UART 外设缓存闸门（2026-09-27 用户定案："每次程序不应该强制暂停 rv 内核等待 mimo"）：
+//   把 UART 从"逐字节 MMIO 寄存器组（每字符 1~2 次跨线程事务、每次都停 CPU）"改成
+//   guest RAM 里的**缓存 + 就绪位**（rx/tx_state），宿主每 tick 整块同步一次。判据四条：
+//     ① 布局/装配单一来源（地址链 + RAM 覆盖算式 + OcBoardLayout 与 UartCache 同一份常量）；
+//     ② 假 guest RAM 跑完整收发协议（满/空边界、丢弃可观测、指针越界拒绝、跨环尾）；
+//     ③ hal.h 的 HAL_UART_* 与 Java 常量逐项对拍（布局不允许有两份）；
+//     ④ ★ 真固件在**退役的 UART MMIO 窗口**上的访问次数 = 0（旧路径没有复活），
+//        并按设备打印 MMIO 现场账（"其余设备还剩哪些停摆点"）。
+//   ⚠ 依赖 processResources 与已编译的固件（先跑 excode/firmware/build-all.ps1）。
+//   ./gradlew :common:runUartCacheTest
+tasks.register('runUartCacheTest', JavaExec) {
+    group = 'verification'
+    description = 'Run UART peripheral cache (no-MMIO-stop) self test with the real firmware; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.peripheral.UartHwSelfTest'
+    workingDir = rootProject.projectDir
+    dependsOn 'processResources'
+}
+
+tasks.register('runCpuTierTest', JavaExec) {
+    group = 'verification'
+    description = 'Run CPU tier table (MCU/SOC/CPU frequency ladder) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.SocCpuTiersSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 高级分析器排版自测（2026-09-26 用户定案："oc 原版分析器的高级版本，可以打开 UI，UI 显示各种数据"）：
+//   面板（LDLib2）与无人化 MCP 工具**共用同一份**文本 ⇒ 分区顺序 / 单位换算 / 缺项占位
+//   （"-" 而不是编造 0）必须先离线钉死，否则会出现"界面看着对、工具断言不过"。
+//   ./gradlew :common:runInspectTest
+// 真彩屏闸门（2026-09-26 用户定案："真彩屏从 1bit 开始一直支持到 32bit，能兼容 oc 原版"）：
+//   几何（1bpp/4bpp 位打包、stride）、调色板解码、像素读写往返、双形态互不串味、
+//   锁 ⇒ 跳过并累计 SKIPPED、拼合（2×1/1×2/2×2/不同尺寸/L 形拒绝）。
+//   ./gradlew :common:runScreenTest
+// 屏幕拼合闸门（照原版 OC 逻辑重写：MultiBlock 拼合同朝向相邻屏）：
+//   ./gradlew :common:runScreenWallTest
+tasks.register('runScreenWallTest', JavaExec) {
+    group = 'verification'
+    description = 'Run screen merge (MultiBlock, vanilla-OC logic) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenWallSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runScreenTest', JavaExec) {
+    group = 'verification'
+    description = 'Run true-color screen (1..32bpp, lock, merge) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 8×8 字模 + TEXT 模式字符层闸门（2026-09-27，真彩屏 TEXT 模式渲染）：
+//   字模是 2048 字节裸数据（抄错一个字节、少一个字形、位序反了都只能在客户端截图里肉眼发现），
+//   字符层是"查位 + 上色"—— 两条都能不需要 Minecraft 钉死：
+//   字模完整性（256 字形 × 8 字节）、取位函数（bit7 = 最左像素，逐位对拍经典 ROM 字模）、
+//   空字符 = 全 0 的边界、Unicode → 字形号与 JDK 的 CP437 码页一一对应（256 个字节一个不差）、
+//   字符层的颜色/越界/掉字形/铺不满的边角，以及"256 个字形全部画得出来"。
+//   ./gradlew :common:runFontTest
+tasks.register('runFontTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the embedded 8x8 font + TEXT-mode character layer self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenFontSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runInspectTest', JavaExec) {
+    group = 'verification'
+    description = 'Run advanced analyzer (sandbox inspect snapshot) formatting self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.SandboxInspectSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runVolumesTest', JavaExec) {
+    group = 'verification'
+    description = 'Run multi-volume (partition roles) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.fs.DiskVolumesSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 程序库 + 装盘器沙盒自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runProgramsTest
+// 覆盖：common 能否读到固件字节（资源已从 neoforge 下放到 common）、装进文件夹树盘与 FAT 盘、
+//      重挂载持久、空程序被拒。
+tasks.register('runProgramsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run program library (firmware resources + disk installer) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.os.ProgramsSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 引导决策沙盒自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runBootPlanTest
+// 覆盖：boot order（软盘优先/同类按槽位）、盘里没程序就跳过、全空 ⇒ 明确无引导盘、换程序立即生效。
+tasks.register('runBootPlanTest', JavaExec) {
+    group = 'verification'
+    description = 'Run boot decision self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.os.BootPlanSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 安装器沙盒自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runInstallerTest
+// 覆盖：空盘装系统（建分区+格式化+装程序+校验）、换系统重装、装不下 ⇒ 报错且**盘上原系统完好**、
+//      可用空间估算保守且单调。
+tasks.register('runInstallerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run system installer self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.os.InstallerSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 外设映射层沙盒自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runPeripheralMapTest
+// 覆盖：MCU 只能 UART（端口即身份）、端口用尽报错、SOC 默认 mailbox、手动覆盖（盘→UART）、
+//      覆盖未知设备报错、无 USB 控制器报错、USB 端点分配。
+tasks.register('runPeripheralMapTest', JavaExec) {
+    group = 'verification'
+    description = 'Run peripheral mapping self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.peripheral.PeripheralMapSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// PCIe 通道预算沙盒自测（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runPcieTest
+// 覆盖：顺序分配、通道不足报错（含"还剩几条"）、单卡超平台、USB 1.0~3.0 速度等级、
+//      "控制器占通道 → 端点挂设备"两层拓扑（与 PeripheralMap 联合）。
+tasks.register('runPcieTest', JavaExec) {
+    group = 'verification'
+    description = 'Run PCIe lane budget self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.peripheral.PcieFabricSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 组件调用消费语义闸门（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runOcCallConsumeTest
+// 回归真机 bug：CALL 未被消费 ⇒ 残留 CALL=1 被后续每次 pump 重复兑现（固件 2 次请求被放大成 259 次）。
+tasks.register('runOcCallConsumeTest', JavaExec) {
+    group = 'verification'
+    description = 'Run component-call consume-once self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.oc.OcCallConsumeSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 固件离线运行装置（2026-09-18，纯 Java 零 MC）：
+//   ./gradlew :common:runFirmwareTest
+// 装配与真机同构的板子（ROM 系统区/RAM/Timer@IRQ7/UART/寄存器桥），直接以系统镜像为复位向量跑起来，
+// 断言 UART 出现 [Cryptand OS] booting 与 shell ready ⇒ 改固件不必起客户端。
+// ⚠ 依赖 processResources：固件 .bin 由 excode/firmware/build-all.ps1 复制到 src/main/resources，
+// 而测试读的是 build/resources —— 不显式依赖就会出现"测试跑的是旧固件"（已经踩过三次：
+// 真机 runClient 一次、本闸门两次）。同一类坑只该修一次。
+tasks.register('runFirmwareTest', JavaExec) {
+    group = 'verification'
+    description = 'Run Cryptand OS firmware inside the offline sandbox; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.os.FirmwareRunSelfTest'
+    workingDir = rootProject.projectDir
+    dependsOn 'processResources'
+}
+
+// Cryptand BIOS 沙盒自测（2026-09-24，纯 Java 零 MC）：
+//   ./gradlew :common:runBiosTest
+// 覆盖：软盘优先选盘、把选中盘的程序交给架构、无程序/无盘不启动、架构拒绝时如实上报。
+tasks.register('runBiosTest', JavaExec) {
+    group = 'verification'
+    description = 'Run Cryptand BIOS (host-side, arch-agnostic boot) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.bios.CryptandBiosSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// Lua BIOS 离线闸门（2026-09-26）：用 luaj 真跑 bios.lua（**与游戏同一份字节**）+ 假 OC 组件世界，
+// 断言"真 OpenOS 的 /init.lua 第 2 行拿得到引导盘地址"、句柄是 userdata 也能读通、盘拔走不卡住、
+// 没盘可引导时必须报错并列出看到的盘。此前这三条只能在真机上试，代价是每次一轮客户端。
+// luaj 只进本任务的 classpath（common 主代码仍然零第三方依赖）。
+//   ./gradlew :common:runBiosLuaTest
+configurations {
+    biosLua
+}
+dependencies {
+    // 闸门类在 main 源码里 ⇒ 编译期要看得见 luaj；compileOnly 保证它**不随模组分发**、
+    // 也不进任何 runtime classpath（common 主逻辑依旧零第三方依赖，只有这道闸门用得到）。
+    compileOnly 'com.github.FiguraMC.luaj:luaj-jse:3.0.8-figura'
+    compileOnly 'com.github.FiguraMC.luaj:luaj-core:3.0.8-figura'
+    biosLua 'com.github.FiguraMC.luaj:luaj-jse:3.0.8-figura'
+    biosLua 'com.github.FiguraMC.luaj:luaj-core:3.0.8-figura'
+}
+// 上屏决策闸门（2026-09-18）：有 GPU 走页+blit（大屏分带），没有则逐行兜底；强制 CPU 优先。
+//   ./gradlew :common:runDisplayPresenterTest
+tasks.register('runDisplayPresenterTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the display present plan (GPU page/bands vs CPU fallback) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.DisplayPresenterSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 上屏展开闸门（2026-09-18）：CP437 码页解码（0xB0 -> ░ 不是 °）+ 同色分段（合并调用）+ 分带。
+//   ./gradlew :common:runDisplayPainterTest
+tasks.register('runDisplayPainterTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the display paint expansion (CP437 code page + same-color runs + bands) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.DisplayPainterSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// GPU 显存占用闸门（2026-09-18）：GPU 基础占用 + 每屏 VRAM + 屏数上限；VRAM 与内存同占用。
+//   ./gradlew :common:runGpuMemoryTest
+tasks.register('runGpuMemoryTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the GPU memory (base + per-screen VRAM shares RAM) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.GpuMemorySelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 显存窗口协议闸门（2026-09-18）：门铃脏检查、三平面、后端回写、错误路径。
+//   ./gradlew :common:runDisplayWindowTest
+tasks.register('runDisplayWindowTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the VRAM window protocol (doorbell + planes + backend) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.DisplayWindowSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 显示拓扑闸门（2026-09-18）：没有 GPU 就看不见显示区域；屏必须挂显卡；OC 原版显卡不支持真彩屏。
+//   ./gradlew :common:runDisplayTest
+tasks.register('runDisplayTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the display topology (screen ownership + gpu capability) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.DisplayOwnershipSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 三层链路闸门（2026-09-18）：外设层 → 模块接口层 → RV 内核（写窗口入队、tick 按速率到外设、RX 反向、计数可读）。
+//   ./gradlew :common:runPeripheralStackTest
+tasks.register('runPeripheralStackTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the peripheral -> module -> RV kernel stack self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.PeripheralStackSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 共享总线闸门（2026-09-18）：带宽竞争（加权公平/空份额回收）+ 按协议真实等效的流控（丢 vs 背压）。
+//   ./gradlew :common:runSharedBusTest
+tasks.register('runSharedBusTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the shared bus (bandwidth contention + per-protocol flow control) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.peripheral.SharedBusSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 具体模块闸门（2026-09-18）：I2C 地址分发 / PCIe 转接都在模块内部完成，RV 只写窗口。
+//   ./gradlew :common:runModuleImplTest
+tasks.register('runModuleImplTest', JavaExec) {
+    group = 'verification'
+    description = 'Run concrete module impls (I2C dispatch / PCIe bridge) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.SocModuleImplSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 板级模块清单闸门（2026-09-18）：虚拟机决定 RV 有哪些模块（接口 + 速率 + 寄存器映射），
+// 并校验"窗口不重叠 / 档位允许集 / 声明与实物一致"，且与外设 IO 线预算接得上。
+//   ./gradlew :common:runSocModuleTest
+tasks.register('runSocModuleTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the board module list (interface + rate + registers) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.SocModuleSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 窗口 × 共享总线闸门（2026-09-18）：绑总线后写=入队、tick 才到达、命令/数据分流、流控差异。
+//   ./gradlew :common:runWindowBusTest
+tasks.register('runWindowBusTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the auto-forward window on a shared bus self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.device.AutoForwardWindowBusSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 自动转发窗口闸门（2026-09-18）：写内存 = 一次总线传输（FSMC/8080），且带宽真的限得住。
+//   ./gradlew :common:runWindowTest
+tasks.register('runWindowTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the auto-forward window (FSMC/8080) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.device.AutoForwardWindowSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 组件 ABI 方法声明表闸门（2026-09-18）：名字 / 方向 / 线程 / 预算收敛成一张表后的回归防线。
+//   ./gradlew :common:runOcAbiTableTest
+tasks.register('runOcAbiTableTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the OC component ABI method-table self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.oc.OcAbiTableSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runBiosLuaTest', JavaExec) {
+    group = 'verification'
+    description = 'Run bios.lua inside luaj against a fake OC component world; no MC'
+    classpath = sourceSets.main.runtimeClasspath + configurations.biosLua
+    mainClass = 'com.hdf.cryptand.soc.bios.BiosLuaSelfTest'
+    workingDir = rootProject.projectDir
+    // bios.lua 读的是 build/resources —— 不显式依赖会出现"闸门跑的是旧字节"（runFirmwareTest 踩过三次）
+    dependsOn 'processResources'
+}
+
+// USB 设备树 + 带宽沙盒自测（2026-09-24，纯 Java 零 MC）：
+//   ./gradlew :common:runUsbTest
+// 覆盖：端点分配、带宽硬上限、USB3.0 插 2.0 控制器的降级兼容、手动指定放不下时明确报错、
+//      未知控制器/设备报错、自动落到下一个控制器、一设备只挂一次。
+tasks.register('runUsbTest', JavaExec) {
+    group = 'verification'
+    description = 'Run USB device tree and bandwidth self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.peripheral.UsbFabricSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// SoC 调度器自测（2026-09-15，纯 Java 零 MC）：
+//   ./gradlew :common:runSocSchedulerTest
+// 覆盖：多芯片并行调度、非阻塞派发、负载自适应升级为独占线程、配额、关停释放。
+tasks.register('runSocSchedulerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SoC scheduler self test (shared pool + dedicated pinned worker)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.SocSchedulerSelfTest'
+}
+
+// 工具链查找 / 编译后端自测（2026-09-15，纯 Java 零 MC）：
+//   ./gradlew :common:runToolchainTest
+// 覆盖：cryptand/tool 自带目录优先 → 系统 PATH → 常见路径 → 服务端回退 → 缺工具提示；
+//       诊断行解析；缺工具时编译失败不抛异常。
+tasks.register('runToolchainTest', JavaExec) {
+    group = 'verification'
+    description = 'Run C toolchain locator + compiler backend self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.toolchain.ToolchainSelfTest'
+}
+
+// SoC 外设自测（2026-09-15，纯 Java 零 MC）：
+//   ./gradlew :common:runPeripheralTest
+// 覆盖：RegBank / Timer / UART16550 / PWM / ADC 的宿主 API、MMIO 行为与固件端到端访问。
+tasks.register('runPeripheralTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SoC peripheral self test (RegBank/Timer/UART/PWM/ADC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.PeripheralSelfTest'
 }
 
 // 多频叠加（WaveformGroup/MultiToneSolver，PLC 核心）自测（2026-08-13）：
@@ -77,6 +898,16 @@ tasks.register('runTransportTest', JavaExec) {
     description = 'Run integrated network core transport async self test'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.hdf.cryptand.integratednetwork.IntegratedNetworkCoreSelfTest'
+}
+
+// 统一底层数学门面自测（2026-08-30，用户：OpenBLAS+SuperLU 统一接口；
+//   纯 Java 回退路径验证——无 DLL 时自动转 Java 实现）：
+//   ./gradlew :common:runNativeMathTest
+tasks.register('runNativeMathTest', JavaExec) {
+    group = 'verification'
+    description = 'Run unified NativeMath (BLAS + dense/sparse LU) self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.math.NativeMathSelfTest'
 }
 
 // AC源 + 电阻 + 导线回路仿真自测（2026-08-16，用户要求）：
@@ -188,6 +1019,15 @@ tasks.register('runTriggerTest', JavaExec) {
     mainClass = 'com.hdf.cryptand.circuitsimulation.compute.TriggerDispatcherSelfTest'
 }
 
+// 线程执行表门闸自测（2026-08-30，乱序/顺序执行 + 可改容量上限）：
+//   ./gradlew :common:runReadWriteGateTest
+tasks.register('runReadWriteGateTest', JavaExec) {
+    group = 'verification'
+    description = 'Run ReadWriteGate (unordered/ordered execution table + settable capacity) test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.core.concurrent.ReadWriteGateSelfTest'
+}
+
 // 电动机反电动势闭环自测（2026-08-19，修复"连接电机导线就消失"）：
 //   ./gradlew :common:runMotorEmfTest
 tasks.register('runMotorEmfTest', JavaExec) {
@@ -195,6 +1035,15 @@ tasks.register('runMotorEmfTest', JavaExec) {
     description = 'Run motor back-EMF closed loop (start inrush -> speed up -> low no-load current) self test'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.hdf.cryptand.circuitsimulation.solver.MotorEmfSelfTest'
+}
+
+// 单相感应电机稳态开环自测（2026-09-27，修“电机来回跳转速和应力”后加的离线闸门）：
+//   ./gradlew :common:runInductionMotorTest
+tasks.register('runInductionMotorTest', JavaExec) {
+    group = 'verification'
+    description = 'Run single-phase induction motor open-loop steady-state self test (no oscillation)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.circuitsimulation.solver.InductionMotorOpenLoopSelfTest'
 }
 
 // 动力学模型统一自测（2026-08-20，能量/温度/转速统一用 DynamicsModel）：
@@ -214,3 +1063,118 @@ tasks.register('runMotorWireHeatCheck', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.hdf.cryptand.circuitsimulation.solver.MotorWireHeatCheck'
 }
+
+// 串口对接库自测（2026-09-08，COM 串口：接口层 + jSerialComm 后端，无硬件也可跑）：
+//   ./gradlew :common:runSerialTest
+tasks.register('runSerialTest', JavaExec) {
+    group = 'verification'
+    description = 'Run SerialPort (COM) abstraction + jSerialComm backend self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.serial.SerialSelfTest'
+}
+
+// 通用游戏输入后端自测（2026-09-08，gameinput：DirectInput8/罗技 SDK 后端 + 管理类，无硬件也可跑）：
+//   ./gradlew :common:runInputTest
+tasks.register('runInputTest', JavaExec) {
+    group = 'verification'
+    description = 'Run GameInput (DirectInput8/Logitech FFB) abstraction + backends self test'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.gameinput.GameInputSelfTest'
+}
+
+// MCP 协议框架自测（2026-09-16，纯 Java 零 MC）：
+//   ./gradlew :common:runMcpTest
+// 覆盖：JSON-RPC 2.0 结构与错误码、initialize 版本协商与初始化门禁、tools/list 分页、
+//       tools/call 成功/失败/未知工具/异常翻译、resources（text + base64 blob）、
+//       执行调度（宿主线程执行 + 调用线程等待）、真实 Streamable HTTP 端到端
+//       （会话头/202/404/400/Origin 校验/404 终止）与旧版 HTTP+SSE。
+tasks.register('runMcpTest', JavaExec) {
+    group = 'verification'
+    description = 'Run MCP framework self test (protocol + tools + resources + Streamable HTTP end-to-end)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.mcp.McpSelfTest'
+}
+// 输出面派生闸门（2026-09-27，定案「程序只画图像，转字符还是直画由 GPU 自动决定」）：
+//   派生规则（谁在画 × 屏能显示什么）全项目只有 ScreenOutputFace 一处。
+//   ./gradlew :common:runScreenFaceTest
+tasks.register('runScreenFaceTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the screen output-face derivation (character vs image) self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenOutputFaceSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 图像→字符量化闸门（2026-09-27）：一格 8×8 → 就近调色板 → 双极性 → 与 TextFont8x8 字形比对。
+//   ./gradlew :common:runImageQuantizerTest
+tasks.register('runImageQuantizerTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the image-to-characters quantizer self test (glyph + fg/bg per cell); no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenImageQuantizerSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 帧编码器闸门（2026-09-29）：RGB565 帧 → 任意色深设备（16bpp 快路径 / 调色板最近色 / 直色 / 边界）。
+//   ./gradlew :common:runScreenFrameEncoderTest
+// 整屏帧校验闸门（2026-09-29）：FNV-1a 风格整屏校验（确定性/敏感性/设备重载/边界）；no MC
+//   ./gradlew :common:runScreenFrameChecksumTest
+tasks.register('runScreenFrameChecksumTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the whole-screen frame checksum self test; no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenFrameChecksumSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+tasks.register('runScreenFrameEncoderTest', JavaExec) {
+    group = 'verification'
+    description = 'Run the frame encoder self test (16bpp fast path, palette, direct color, boundaries); no MC'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.soc.board.ScreenFrameEncoderSelfTest'
+    workingDir = rootProject.projectDir
+}
+
+// 分帧缓冲组自测（2026-09-27，waterphysics 前置：主线程读写上限的通用容器）：
+//   ./gradlew :common:runFrameBufferTest
+tasks.register('runFrameBufferTest', JavaExec) {
+    group = 'verification'
+    description = 'Run frame BufferGroup self test (capacity contract, framing equivalence, no loss/dup)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.core.frame.FrameBufferSelfTest'
+}
+
+// 流体物理纯逻辑自测（2026-09-27，waterphysics 子包：水位场/守恒/扩散/写意图/定点几何）：
+//   ./gradlew :common:runWaterphysicsTest
+tasks.register('runWaterphysicsTest', JavaExec) {
+    group = 'verification'
+    description = 'Run water physics pure-logic self test (level field, conservation, spread, write plan, fixed-point math)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.waterphysics.WaterphysicsSelfTest'
+}
+
+// 液体物理引擎自测（2026-09-28，纯 Java 零 MC；fluid 包 = 世界坐标 + 邻接表，不含 region 概念）：
+//   ./gradlew :common:runFluidTest
+// 覆盖：平地倒水铺成 8 格各 1 / 沟槽 10 格（与 %TEMP%\wpsim\Wp3 的 S1 逐格一致）/
+//       U 形管抬升（底层容量不足时必须抬到第二层、两侧水面差 ≤ 1 片）/
+//       跨区块的片（x = 14..20 故意跨过 16，水面照样拉平）/ 未加载截断（守恒、水不许凭空出去）/
+//       边界格接水（片逐轮长大）/ 恒定水源（守恒的唯一例外）。
+tasks.register('runFluidTest', JavaExec) {
+    group = 'verification'
+    description = 'Run fluid engine self test (world-coordinate liquid engine: flat / trench / U-tube / cross-region / unloaded border; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.fluid.FluidEngineSelfTest'
+}
+
+// 液体引擎阶段计时基准（2026-09-29，纯 Java 零 MC）：
+//   ./gradlew :common:runFluidBench
+// 把「一步」拆成构造（扫描/邻接/遍历序）与运行（补源/塌落/重力/压力场/sweep/输出），
+// 打印每步平均耗时与相位分布表。判读口径：优化前必须先看这张表，不许凭推算排序。
+// 只在这里打开 FluidPhase（默认关闭，真机与闸门零开销）。
+tasks.register('runFluidBench', JavaExec) {
+    group = 'verification'
+    description = 'Benchmark FluidEngine per-phase cost (construction vs run; flat + 16^3 section shapes; no MC)'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.hdf.cryptand.fluid.FluidEngineBenchmark'
+}
+

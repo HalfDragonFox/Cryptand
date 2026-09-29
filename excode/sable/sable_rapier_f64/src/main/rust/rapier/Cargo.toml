@@ -1,0 +1,35 @@
+[package]
+name = "sable_rapier"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+marten.workspace = true
+
+fern.workspace = true
+jni.workspace = true
+colored.workspace = true
+log.workspace = true
+humantime.workspace = true
+
+# 2026-09-08 f64 化：同 fork rev 的 rapier3d-f64 crate（共享源码、feature 切 f64）。
+# f64 不支持 SoA SIMD（fork 注释：simd-nightly 仅 f32）→ 只开 parallel（rayon 多线程）。
+rapier3d-f64 = { git = "https://github.com/ryanhcode/rapier", rev = "38e92f117590862481a53df6fc69a5d893e29186", features = [
+    "parallel",
+] }
+#rapier3d = { version = "0.26.1", features = [ "simd-stable" ] }
+
+rayon = "1.10.0"
+dashmap = "7.0.0-rc2"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "sable_rapier"
+path = "src/lib.rs"
+
+[[bench]]
+name = "collision_benchmark"
+harness = false
+
+[dev-dependencies]
+criterion = "0.8.2"

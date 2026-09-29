@@ -1,7 +1,7 @@
 package com.hdf.cryptand.neoforge.railway.pantograph;
 
+import com.hdf.cryptand.neoforge.cee.PantographTapLogic;
 import com.hdf.cryptand.neoforge.railway.RailwayRegistry;
-import com.hdf.cryptand.neoforge.railway.pantograph.PantographTapCache;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
 import com.simibubi.create.foundation.blockEntity.behaviour.BlockEntityBehaviour;
 import net.minecraft.core.BlockPos;
@@ -12,8 +12,6 @@ import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.DyeColor;
-import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -63,7 +61,7 @@ public class PantographBlockEntity extends SmartBlockEntity {
             targetExtensionState = 0;
             // 收弓 → 断开滑触头（主线程写缓存 = 发消息；后台构建不再建模受电弓支路）
             if (level != null && !level.isClientSide)
-                com.hdf.cryptand.neoforge.railway.pantograph.PantographTapCache.set(worldPosition, null);
+                PantographTapCache.set(worldPosition, null);
             return;
         }
 
@@ -86,7 +84,7 @@ public class PantographBlockEntity extends SmartBlockEntity {
         try {
             // 2026-08-23 统一委托 PantographTapLogic（识别放宽：任何自管导线段
             // 都参与升弓贴合；取电 tap 仅猫天线；含扫描诊断日志）
-            com.hdf.cryptand.neoforge.cee.PantographTapLogic.serverHandle(
+            PantographTapLogic.serverHandle(
                     level, worldPosition, getBlockState(), extended,
                     v -> targetExtensionState = v);
         } catch (Throwable ignored) {

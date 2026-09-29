@@ -1,7 +1,12 @@
 package com.hdf.cryptand.neoforge.railway;
 
 import com.hdf.cryptand.circuitsimulation.netgraph.WirePoint;
-import com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
+import com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals;
+import com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock;
+import com.hdf.cryptand.neoforge.railway.pantograph.PantographTapCache;
+import com.hdf.cryptand.neoforge.railway.train.TrainTapCache;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -37,15 +42,15 @@ public final class RailwayPlacementHook {
             if (st.getBlock() instanceof org.patryk3211.powergrid.electricity.base.IElectric)
                 return;
             // 接线端子统一（2026-08-22 用户架构）：非 PowerGrid 端子放置即建网
-            if (!com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals
+            if (!WireTerminals
                     .isTerminal(sl, pos, st))
                 return;
-            int terms = com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals
+            int terms = WireTerminals
                     .terminalCount(sl, pos, st);
             int before = WireNetworkManager.get().nodeCount();
             boolean ok = WireNetworkManager.get().addDevice(pos, terms);
             WireNetworkManager.get().reconstruct(sl);
-            com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+            CryptandNeoForge.WAF_LOGGER.info(
                     "[CeeNet] placed {} terms={} ok={} nodes {}->{}", pos, terms, ok, before,
                     WireNetworkManager.get().nodeCount());
         } catch (Throwable ignored) {
@@ -63,15 +68,15 @@ public final class RailwayPlacementHook {
             // PowerGrid 端子拆除由 ElectricBlockEntityRemoveMixin 处理
             if (st.getBlock() instanceof org.patryk3211.powergrid.electricity.base.IElectric)
                 return;
-            if (!com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals
+            if (!WireTerminals
                     .isTerminal(sl, pos, st))
                 return;
             // 受电弓拆除 → 清滑触头（避免残留触点跨世界/方块误连）
-            if (com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock.class
+            if (PantographBlock.class
                     .isInstance(st.getBlock())) {
-                com.hdf.cryptand.neoforge.railway.pantograph.PantographTapCache.set(pos, null);
+                PantographTapCache.set(pos, null);
             }
-            int terms = com.hdf.cryptand.neoforge.powergrid.device.terminal.WireTerminals
+            int terms = WireTerminals
                     .terminalCount(sl, pos, st);
             for (int t = 0; t < terms; t++) {
                 WireNetworkManager.get().removePoint(new WirePoint("B" + pos + "#" + t));
@@ -85,8 +90,8 @@ public final class RailwayPlacementHook {
     @SubscribeEvent
     public static void onWorldUnload(LevelEvent.Unload ev) {
         try {
-            com.hdf.cryptand.neoforge.railway.pantograph.PantographTapCache.clear();
-            com.hdf.cryptand.neoforge.railway.train.TrainTapCache.clear();
+            PantographTapCache.clear();
+            TrainTapCache.clear();
         } catch (Throwable ignored) {
         }
     }

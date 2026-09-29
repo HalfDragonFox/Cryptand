@@ -13,6 +13,7 @@
 
 package com.hdf.cryptand.neoforge.powergrid.device.wire;
 
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
 import net.minecraft.resources.ResourceLocation;
 
 public final class SaggingWireRenderer {

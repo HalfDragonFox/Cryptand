@@ -1,0 +1,24 @@
+{
+  "neoforge:conditions": [
+    {
+      "type": "cryptand:peripheral_lever_enabled"
+    }
+  ],
+  "type": "minecraft:block",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {
+          "type": "minecraft:item",
+          "name": "cryptand:peripheral_lever"
+        }
+      ],
+      "conditions": [
+        {
+          "condition": "minecraft:survives_explosion"
+        }
+      ]
+    }
+  ]
+}

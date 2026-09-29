@@ -33,8 +33,41 @@ public final class ThreadDispatcher implements ComputeEngine {
     private final int maxThreads;
     /** 每个 Worker 最大管理的虚拟线程数（2026-08-16 用户要求） */
     private final int maxVirtualThreads;
+    /**
+     * 已被【常驻固定线程】占用的虚拟线程名额数。
+     * <p>用户 2026-09-14："如果虚拟线程+固定的话可以在线程池永久移出一个虚拟线程放置在此线程
+     * 常驻池那边，并且分配从 1000 降低到 999（比如）" —— 线程固定不是白拿一条常驻线程，
+     * 而是把虚拟线程配额里的名额<b>永久移出</b>转交给它：总量守恒、同一个分配器记账。
+     */
+    private final java.util.concurrent.atomic.AtomicInteger pinnedSlots =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /**
+     * 常驻线程池（"必须绑定线程的任务"跑在它们上面）。
+     * <p>用户 2026-09-14："当清理虚拟内存池缓存时不动常驻池。" —— 它们是独立登记表，
+     * {@link ThreadWorker} 的关闭/收敛（{@link #shutdown()}）不触碰。
+     */
+    private final java.util.List<PinnedWorker> pinned = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * 任务落点：{@link ThreadWorker}（虚拟线程池）与 {@link PinnedWorker}（常驻池）都能承接任务，
+     * 由 {@link #pickSink()} 按"优先空闲池、全部分配完才用常驻池"的规则挑选。
+     */
+    public interface TaskSink {
+        /** 投递求解任务（结果经分配器的结果表回填） */
+        void submit(ComputeTask task);
+
+        /** 投递通用任务（返回 future 供调用方等待） */
+        java.util.concurrent.CompletableFuture<Void> submitGeneric(Runnable r, TaskMode mode);
+    }
     /** 分配器名（线程命名前缀，2026-08-14 通用化：由构造传入，不硬编码） */
     private final String name;
+    /** 均衡检测间隔（ns；0=每次提交实时均衡；2026-08-29 用户：可配 ms，分配器自查） */
+    private volatile long balanceIntervalNs;
+    /** 上次均衡时间戳（ns；自查：不依赖外部更新） */
+    private volatile long lastBalanceNs;
+    /** 最近一次均衡选中的 Worker（间隔内复用） */
+    private volatile ThreadWorker cachedBest;
     /** 任务 id → 结果 future（Worker 处理完 complete） */
     private final Map<Long, CompletableFuture<ComputeResult>> results =
             new ConcurrentHashMap<>();
@@ -53,12 +86,18 @@ public final class ThreadDispatcher implements ComputeEngine {
     /** 定时任务（可比：按下次触发时间排序） */
     private static final class ScheduledTask implements ScheduledHandle, Comparable<ScheduledTask> {
         final Runnable action;
+        final TaskMode mode;              // ★ 2026-09-05 执行模式（NORMAL=虚拟线程 / EXCLUSIVE / PHYSICS_HIGH=独占直算）
         final long periodNanos;   // 0 = 一次性
         long nextFireNanos;
         volatile boolean cancelled;
 
         ScheduledTask(Runnable action, long initialDelayNanos, long periodNanos) {
+            this(action, TaskMode.NORMAL, initialDelayNanos, periodNanos);
+        }
+
+        ScheduledTask(Runnable action, TaskMode mode, long initialDelayNanos, long periodNanos) {
             this.action = action;
+            this.mode = mode;
             this.periodNanos = periodNanos;
             this.nextFireNanos = System.nanoTime() + Math.max(initialDelayNanos, 0);
         }
@@ -91,6 +130,13 @@ public final class ThreadDispatcher implements ComputeEngine {
             this.workers.add(new ThreadWorker(this.name + "-" + i, results, this.maxVirtualThreads));
         }
         startTimer();
+        // 2026-08-29 线程池自注册：HUD/调试可枚举所有线程池
+        ThreadDispatchers.registerPool(this);
+    }
+
+    /** 分配器名（2026-08-29 HUD/调试用） */
+    public String name() {
+        return name;
     }
 
     /** 启动定时调度线程（daemon，线程名 = <分配器名>-timer） */
@@ -119,9 +165,16 @@ public final class ThreadDispatcher implements ComputeEngine {
 
     /** 注册周期定时任务（带初始延迟，微秒级） */
     public ScheduledHandle schedule(Runnable action, long initialDelayUs, long periodUs) {
+        return schedule(action, TaskMode.NORMAL, initialDelayUs, periodUs);
+    }
+
+    /** ★ 2026-09-05 注册周期定时任务 +【执行模式】（NORMAL=虚拟线程 / EXCLUSIVE /
+     *  PHYSICS_HIGH=独占直算；物理循环应传 PHYSICS_HIGH——常驻 Worker 直算、最高优先级）。 */
+    public ScheduledHandle schedule(Runnable action, TaskMode mode,
+                                    long initialDelayUs, long periodUs) {
         if (action == null) return null;
         if (periodUs <= 0) periodUs = 0;
-        ScheduledTask t = new ScheduledTask(action, initialDelayUs * 1000L, periodUs * 1000L);
+        ScheduledTask t = new ScheduledTask(action, mode, initialDelayUs * 1000L, periodUs * 1000L);
         synchronized (timerLock) {
             timerQueue.add(t);
             timerLock.notifyAll();
@@ -133,6 +186,11 @@ public final class ThreadDispatcher implements ComputeEngine {
     /** 注册一次性定时任务（延迟后执行一次，微秒级） */
     public ScheduledHandle scheduleOnce(Runnable action, long delayUs) {
         return schedule(action, delayUs, 0);
+    }
+
+    /** ★ 2026-09-05 一次性定时任务 + 执行模式。 */
+    public ScheduledHandle scheduleOnce(Runnable action, TaskMode mode, long delayUs) {
+        return schedule(action, mode, delayUs, 0);
     }
 
     /** 当前排队的定时任务数（调试） */
@@ -173,8 +231,9 @@ public final class ThreadDispatcher implements ComputeEngine {
             }
             if (toRun != null && !toRun.cancelled) {
                 try {
-                    // 提交到统一 Worker 池执行（线程数受限、优先空闲）
-                    submitGeneric(toRun.action);
+                    // 提交到统一 Worker 池执行（线程数受限、优先空闲）；
+                    // ★ 2026-09-05 按任务 mode 提交（NORMAL=虚拟线程 / EXCLUSIVE / PHYSICS_HIGH=独占直算）
+                    submitGeneric(toRun.action, toRun.mode);
                 } catch (Throwable ignored) {
                 }
             } else if (sleepNanos > 0) {
@@ -195,8 +254,94 @@ public final class ThreadDispatcher implements ComputeEngine {
     /** 最大线程数（构造时固定，不超过配置设定值） */
     public int maxThreads() { return maxThreads; }
 
-    /** 每个 Worker 最大管理的虚拟线程数（2026-08-16 用户要求） */
+    /**
+     * 设置负载均衡检测间隔（ms；2026-08-29 用户：每隔一定时间检测，分配器自查、
+     * 不依赖外部更新）。0 = 每次提交实时均衡。
+     */
+    public void setBalanceIntervalMs(long ms) {
+        this.balanceIntervalNs = Math.max(0, ms) * 1_000_000L;
+        this.lastBalanceNs = System.nanoTime();
+        this.cachedBest = null; // 间隔变化 → 下一提交立即重新均衡
+    }
+
+    /** 均衡检测间隔（ms；0=实时） */
+    public long balanceIntervalMs() {
+        return balanceIntervalNs / 1_000_000L;
+    }
+    /** 每个 Worker 最大管理的虚拟线程数（配置值；2026-08-16 用户要求） */
     public int maxVirtualThreads() { return maxVirtualThreads; }
+
+    /**
+     * 申请一条【常驻固定线程】并登记进常驻池：把虚拟线程配额里的 1 个名额永久移出，转交给它。
+     *
+     * <p>用户 2026-09-14 定稿："如果虚拟线程+固定的话可以在线程池永久移出一个虚拟线程放置在
+     * 此线程常驻池那边，并且分配从 1000 降低到 999（比如）。"
+     *
+     * @param allowOtherTasks 该线程<b>是否支持其他任务占用</b>（用户："默认为 true，这样的话
+     *                        常驻池也能作为虚拟线程池一部分使用"；false = 独占，只服务投递给
+     *                        它的消息 —— 实时性要求高的设备线程用这个）
+     * @return 新建的常驻线程（可 {@code post} 绑定线程的消息）
+     */
+    public PinnedWorker acquirePinnedSlot(String name, boolean allowOtherTasks) {
+        pinnedSlots.incrementAndGet();
+        int effective = effectiveMaxVirtualThreads();
+        for (ThreadWorker w : workers) {
+            w.setMaxVirtualThreads(effective);   // 已在跑的消费者不动，只是不再增长到旧上限
+        }
+        PinnedWorker p = new PinnedWorker(name, allowOtherTasks, this);
+        pinned.add(p);
+        return p;
+    }
+
+    /** 当前常驻线程清单（诊断；虚拟线程池的清理不会动它们） */
+    public java.util.List<PinnedWorker> pinnedWorkers() {
+        return new ArrayList<>(pinned);
+    }
+
+    /**
+     * 释放一条【常驻固定线程】（2026-09-15，与 {@link #acquirePinnedSlot} 对称）。
+     *
+     * <p>用途：负载自适应调度（如游戏内 SoC 芯片——轻负载走共享池、重负载升为独占，
+     * 负载回落后需降级并<b>归还名额</b>，否则反复升降级会持续泄漏线程）。</p>
+     *
+     * <p>三步：从常驻池移除 → 归还虚拟线程名额（总量守恒）→ 关闭其专属平台线程。</p>
+     *
+     * @return true = 确实由本分配器释放；false = 不属于本分配器（无操作）
+     */
+    public boolean releasePinnedSlot(PinnedWorker worker) {
+        if (worker == null || !pinned.remove(worker)) {
+            return false;
+        }
+        pinnedSlots.updateAndGet(v -> Math.max(0, v - 1));
+        final int effective = effectiveMaxVirtualThreads();
+        for (ThreadWorker w : workers) {
+            w.setMaxVirtualThreads(effective);   // 名额归还 → 虚拟线程上限恢复
+        }
+        try {
+            worker.dispatcher().close();          // 关闭承载它的专属线程（空闲 park 中）
+        } catch (Throwable ignored) {
+        }
+        return true;
+    }
+
+    /** 取走某任务的等待 future（常驻线程执行完承接的任务时回填结果用） */
+    java.util.concurrent.CompletableFuture<ComputeResult> takeResult(long taskId) {
+        return results.remove(taskId);
+    }
+
+    /** 已被常驻固定线程占用的虚拟线程名额数（诊断） */
+    public int pinnedSlots() { return pinnedSlots.get(); }
+
+    /**
+     * 当前<b>生效</b>的"每 Worker 虚拟线程上限" = 配置值 − 常驻固定线程占用的名额。
+     * <p>配置值 0 = 明确禁用虚拟线程，语义不变；否则至少保留 1，不把虚拟线程池饿死。
+     */
+    public int effectiveMaxVirtualThreads() {
+        if (maxVirtualThreads <= 0) {
+            return maxVirtualThreads;
+        }
+        return Math.max(1, maxVirtualThreads - pinnedSlots.get());
+    }
 
     /** 当前所有 Worker 活动（执行中）虚拟线程总数（调试） */
     public int activeVirtualThreads() {
@@ -213,42 +358,166 @@ public final class ThreadDispatcher implements ComputeEngine {
     }
 
     /**
+     * 实际使用的线程数（2026-08-29 用户：线程数应显示实际使用量，不是全部核心）。
+     * 当前有负载（排队/执行中）的 Worker 数——已创建但空闲的线程不算“使用”。
+     */
+    public int usedThreadCount() {
+        int n = 0;
+        for (ThreadWorker w : workers) if (w.load() > 0) n++;
+        return n;
+    }
+
+    /**
      * 线程分发统计（调试，2026-08-12 用户要求）：每个 Worker 累计处理任务数
      * 与当前负载（空闲/忙）。调用方按需每秒打印（如 PhasorEngine 配置开关）。
+     * 2026-08-29 增加【每秒处理任务数】与虚拟线程使用量/最大值（HUD 用）。
      */
     public String stats() {
-        StringBuilder sb = new StringBuilder("ThreadDispatcher{threads=")
-                .append(maxThreads).append(", maxVt=").append(maxVirtualThreads)
+        StringBuilder sb = new StringBuilder("ThreadDispatcher{").append(name)
+                .append(" usedThreads=").append(usedThreadCount()).append('/')
+                .append(maxThreads)
+                .append(", maxVt/worker=").append(effectiveMaxVirtualThreads())
+                .append(pinnedSlots.get() > 0 ? "(pinned-" + pinnedSlots.get() + ")" : "")
                 .append(", totalLoad=").append(totalLoad()).append('}');
         for (ThreadWorker w : workers) {
-            sb.append('\n').append("  ").append(w.workerName())
+            sb.append('\n').append("  ").append(w.workerName());
+            if (w.maxVirtualThreads() > 0) {
+                sb.append(" vt=").append(w.activeVirtualThreads())
+                        .append('/').append(w.maxVirtualThreads());
+            }
+            sb.append(" load=").append(w.load())
+                    .append(String.format(" %.0f/s", w.processedPerSecond()))
+                    .append(String.format(" vt%.0f/s", w.vtCreatedPerSecond()))
                     .append(" processed=").append(w.processed())
-                    .append(" load=").append(w.load())
-                    .append(" vt=").append(w.activeVirtualThreads())
-                    .append('/').append(w.maxVirtualThreads())
                     .append(w.idle() ? " (idle)" : " (busy)");
         }
         return sb.toString();
     }
 
     /**
-     * 选择线程：优先【空闲（休眠）】Worker → 其次【最低负载】Worker。
+     * 每 Worker 一行的负载摘要（HUD 用，2026-08-29）。
+     * 行格式：&lt;worker&gt; | load=&lt;排队+执行中&gt; | vt=&lt;使用/最大&gt; |
+     * &lt;xx.x&gt;/s=每秒处理 | processed=&lt;累计&gt; | idle/busy
+     */
+    public java.util.List<String> workerSummaryLines() {
+        java.util.List<String> out = new ArrayList<>(maxThreads);
+        for (ThreadWorker w : workers) {
+            StringBuilder sb = new StringBuilder().append(w.workerName());
+            if (w.maxVirtualThreads() > 0) {
+                sb.append("  vt ").append(w.activeVirtualThreads())
+                        .append('/').append(w.maxVirtualThreads());
+            }
+            sb.append("  load ").append(w.load())
+                    .append(String.format("  %.1f/s", w.processedPerSecond()))
+                    .append(String.format("  vt%.1f/s", w.vtCreatedPerSecond()))
+                    .append("  proc ").append(w.processed())
+                    .append(w.idle() ? "  idle" : "  busy");
+            out.add(sb.toString());
+        }
+        return out;
+    }
+
+    /**
+     * 选择线程（2026-08-29 用户：均衡每隔一定时间检测，单位 ms，分配器自查）。
+     * <p>
+     * 自适应：
+     * <ul>
+     *   <li>均衡间隔开启（&gt;0）：间隔内复用最近一次均衡选中的空闲 Worker
+     *       （{@link #cachedBest}），无需每次提交扫描——负载检测与单位时间统计
+     *       同源（懒时间戳，不依赖外部 ServerTick 更新）；若缓存忙则临时
+     *       回退到空闲中最闲者，避免间隔内压单线程；</li>
+     *   <li>间隔 0 = 每次提交实时均衡：空闲中选累计处理最少者，全忙选最低负载。</li>
+     * </ul>
      * 统一管理下线程数受限，绝不创建新线程。
      */
     private ThreadWorker pickWorker() {
+        long interval = balanceIntervalNs;
+        if (interval > 0) {
+            long now = System.nanoTime();
+            if (now - lastBalanceNs < interval) {
+                // 间隔内：缓存空闲 → 直接复用（自查低频，无外部驱动）
+                ThreadWorker c = cachedBest;
+                if (c != null && c.idle()) return c;
+                // 缓存忙 → 找空闲中最闲的；仍无则用缓存（下一间隔再均衡）
+                ThreadWorker idle = pickIdleLeastProcessed();
+                if (idle != null) return idle;
+                if (c != null) return c;
+                return pickMinLoad();
+            }
+            // 间隔到 → 重新均衡并缓存（时间戳自查）
+            ThreadWorker best = pickBalanced();
+            lastBalanceNs = now;
+            cachedBest = best;
+            return best;
+        }
+        // 实时模式：每次提交均衡
+        ThreadWorker idle = pickIdleLeastProcessed();
+        if (idle != null) return idle;
+        return pickMinLoad();
+    }
+
+    /** 空闲 Worker 中【累计处理最少】（长期均衡） */
+    private ThreadWorker pickIdleLeastProcessed() {
+        ThreadWorker idleBest = null;
+        for (ThreadWorker w : workers) {
+            if (!w.idle()) continue;
+            if (idleBest == null || w.processed() < idleBest.processed()) idleBest = w;
+        }
+        return idleBest;
+    }
+
+    /** 全忙：当前负载最低 */
+    private ThreadWorker pickMinLoad() {
         ThreadWorker best = workers.get(0);
         for (ThreadWorker w : workers) {
-            if (w.idle()) return w;              // 优先休眠线程
-            if (w.load() < best.load()) best = w; // 其次最低负载
+            if (w.load() < best.load()) best = w;
         }
         return best;
     }
 
-    /** 异步提交任务（不阻塞调用方）：选 Worker 投递，结果经 CompletableFuture 获取 */
+    /** 全面均衡（空闲中最闲；无空闲则最低负载）并作缓存候选 */
+    private ThreadWorker pickBalanced() {
+        ThreadWorker idle = pickIdleLeastProcessed();
+        return idle != null ? idle : pickMinLoad();
+    }
+
+    /**
+     * 选择任务落点（用户 2026-09-14 定稿："分配时优先分配任务到空闲的池，只有全部分配完成后
+     * 再使用常驻池"）：
+     * <ol>
+     *   <li>有空闲的普通 Worker ⇒ 用它（虚拟线程池优先）；</li>
+     *   <li>普通 Worker 全都有任务在身 ⇒ 交给常驻池里"允许被占用且当前空闲"的那条
+     *       （常驻池因此也能作为虚拟线程池的一部分使用）；</li>
+     *   <li>都没有 ⇒ 老实排队，按均衡规则落到负载最低的 Worker。</li>
+     * </ol>
+     */
+    private TaskSink pickSink() {
+        ThreadWorker idle = pickIdleLeastProcessed();
+        if (idle != null) {
+            return idle;
+        }
+        PinnedWorker free = pickFreePinned();
+        if (free != null) {
+            return free;
+        }
+        return pickWorker();
+    }
+
+    /** 常驻池里可被普通任务占用、且当前空闲的一条 */
+    private PinnedWorker pickFreePinned() {
+        for (PinnedWorker p : pinned) {
+            if (p.allowOtherTasks() && !p.busy()) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /** 异步提交任务（不阻塞调用方）：选落点投递，结果经 CompletableFuture 获取 */
     public CompletableFuture<ComputeResult> submit(ComputeTask task) {
         CompletableFuture<ComputeResult> f = new CompletableFuture<>();
         results.put(task.id, f);
-        pickWorker().submit(task);
+        pickSink().submit(task);
         return f;
     }
 
@@ -259,7 +528,7 @@ public final class ThreadDispatcher implements ComputeEngine {
      * 默认普通模式：虚拟线程执行（2026-08-16 用户要求）。
      */
     public CompletableFuture<Void> submitGeneric(Runnable r) {
-        return pickWorker().submitGeneric(r);
+        return pickSink().submitGeneric(r, TaskMode.NORMAL);
     }
 
     /**
@@ -267,7 +536,32 @@ public final class ThreadDispatcher implements ComputeEngine {
      * {@link TaskMode#NORMAL} 走虚拟线程；{@link TaskMode#EXCLUSIVE} 独占直算。
      */
     public CompletableFuture<Void> submitGeneric(Runnable r, TaskMode mode) {
-        return pickWorker().submitGeneric(r, mode);
+        return pickSink().submitGeneric(r, mode);
+    }
+
+    /**
+     * 提交任务并【阻塞等待完成，附带超时】（2026-08-30 用户需求：
+     * 发送任务时可附带超时时间，timeoutNanos <= 0 = 无限等待）。
+     * <p>超时返回后任务【仍在执行】（虚拟线程/JNI 挂起不可取消）——调用方
+     * 通过返回 future 的 {@code isDone()} 判断是否超时并决定是否放弃结果。
+     */
+    public CompletableFuture<Void> submitGenericTimed(Runnable r, TaskMode mode,
+                                                      long timeoutNanos) {
+        CompletableFuture<Void> f = pickSink().submitGeneric(r, mode);
+        try {
+            if (timeoutNanos > 0) {
+                f.get(timeoutNanos, TimeUnit.NANOSECONDS);
+            } else {
+                f.get(); // 无限等待
+            }
+        } catch (TimeoutException te) {
+            return f; // 超时：future 未完成（任务仍在执行）
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        } catch (java.util.concurrent.ExecutionException ee) {
+            // 任务内部异常 → future 已完成（isDone()=true）
+        }
+        return f;
     }
 
     /**
@@ -312,6 +606,8 @@ public final class ThreadDispatcher implements ComputeEngine {
 
     @Override
     public void close() {
+        // ⚠ 只收敛【虚拟线程池】的 Worker：常驻池（pinned）是"必须绑定线程的任务"的载体，
+        //   用户定稿"清理虚拟内存池缓存时不动常驻池" —— 它们由各自的持有方决定生命周期。
         for (ThreadWorker w : workers) w.shutdown();
         workers.clear();
         results.clear();

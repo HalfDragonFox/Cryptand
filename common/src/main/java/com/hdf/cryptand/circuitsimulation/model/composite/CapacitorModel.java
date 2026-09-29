@@ -53,11 +53,18 @@ public class CapacitorModel extends CompositeModel implements EnergyDevice, Ther
         this.esr = r;
     }
 
-    /** 组合基础元件：a --Resistor(ESR)-- x --Capacitor-- b */
+    /** 组合基础元件：a --Resistor(ESR)-- x --Capacitor-- b（ESR≤0 → 直连 a-b） */
     private static Element[] build(int a, int b, int x, double c, double esr) {
         java.util.List<Element> els = new java.util.ArrayList<>();
-        if (esr > 0) els.add(new Resistor(a, x, esr));
-        els.add(new Capacitor(x, b, c));
+        // ⚠ 2026-08-30 审计 M9 根因：esr≤0 时直接 a-b 直连储能元件（x 弃用）——
+        // 否则 a 与 x 之间无元件 → a 端口悬空（仅 GMin）→ 电容实际未接入电路。
+        // 与 MotorModel.build 的 L=0 处理（直接 a-b）一致。
+        if (esr > 0) {
+            els.add(new Resistor(a, x, esr));
+            els.add(new Capacitor(x, b, c));
+        } else {
+            els.add(new Capacitor(a, b, c));
+        }
         return els.toArray(new Element[0]);
     }
 

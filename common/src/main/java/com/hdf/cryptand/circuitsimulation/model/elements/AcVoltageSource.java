@@ -170,6 +170,17 @@ public class AcVoltageSource extends AbstractElement {
             m.addY(nodeB, nodeA, new FloatComplex(-g, 0));
             return;
         }
+        // ⚠ 2026-08-30 审计 M5：与 double 版一致——固定频率源（frequency>0，
+        // 如 PLC 载波）在非匹配频率只呈现内阻（源对目标频率短路），不再全量
+        // 注入（float 版此前缺此检查 → 非匹配频率仍注入错误电流）。
+        double targetF = omega / (2 * Math.PI);
+        if (frequency > 0 && Math.abs(frequency - targetF) > 1e-6) {
+            m.addY(nodeA, nodeA, new FloatComplex(g, 0));
+            m.addY(nodeB, nodeB, new FloatComplex(g, 0));
+            m.addY(nodeA, nodeB, new FloatComplex(-g, 0));
+            m.addY(nodeB, nodeA, new FloatComplex(-g, 0));
+            return;
+        }
         double rad = Math.toRadians(phaseDeg);
         float ir = (float) (amplitude * Math.cos(rad) * g);
         float ii = (float) (amplitude * Math.sin(rad) * g);

@@ -19,6 +19,8 @@
  */
 package com.hdf.cryptand.neoforge.aeronautics;
 
+import com.hdf.cryptand.neoforge.aeronautics.config.ConfigAero;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -39,6 +41,35 @@ public final class WheelStressAccess {
     private static volatile Object mSableHelper;
 
     private static volatile boolean inited;
+
+    /** [WheelStress] log4j 诊断（进入 latest.log，2026-08-29 调整为 log4j） */
+    private static final org.apache.logging.log4j.Logger LOGGER =
+            org.apache.logging.log4j.LogManager.getLogger("Cryptand-AeroWheel");
+
+    /** [WheelStress] 诊断节流（5s；确认公式真实计算） */
+    private static volatile long WS_DBG_LAST;
+
+    /**
+     * 结构质量同步缓存：pos → kg。服务端算好 → KineticBlockEntity.write 写入 NBT
+     * → 客户端 read 缓存 → frictionStressOf 客户端用它（2026-08-29 实锤：
+     * ClientSubLevel 无质量 API，goggle 在客户端跑 N=0 → 恒 4 根因）。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<
+            net.minecraft.core.BlockPos, Double> STRUCT_MASS_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 客户端缓存结构质量（KineticStressHookMixin.read 注入调用）。 */
+    public static void cacheStructureMass(net.minecraft.core.BlockPos pos, double mass) {
+        if (pos == null || !(mass > 0) || !Double.isFinite(mass)) return;
+        STRUCT_MASS_CACHE.put(pos.immutable(), mass);
+    }
+
+    /** 读缓存结构质量（客户端 frictionStressOf 用；miss → 0）。 */
+    private static double structureMassAt(net.minecraft.core.BlockPos pos) {
+        if (pos == null) return 0;
+        Double m = STRUCT_MASS_CACHE.get(pos.immutable());
+        return (m != null && Double.isFinite(m) && m > 0) ? m : 0;
+    }
 
     private WheelStressAccess() {
     }
@@ -99,36 +130,91 @@ public final class WheelStressAccess {
         return M_GET_SPEED != null && M_GET_HELD_ITEM != null;
     }
 
-    /**
-     * 读取轮子摩擦应力（SU）。全部数据实时取值，物理准确。
-     * 反射失败/非轮子/无接触 → 安全回退 0（无摩擦负荷不消耗应力）。
-     *
-     * @param be WheelMountBlockEntity 实例（Object 传入，零编译期依赖）
-     * @return 摩擦应力 SU（≥0）
-     */
+    /** 读取轮子应力（SU）——按【实际转速】(getSpeed()) 计算，供 goggle 显示当前消耗。
+     *  2026-08-30 用户简化：SU = (16基础 + 重量×系数)×|rpm|，无摩擦力/衰减。 */
     public static double frictionStressOf(Object be) {
         try {
             ensureInit();
             if (!ready() || be == null) return 0;
-            // 1) 轮胎半径 r（TireLike.radius；无轮胎 → 0）
             double radius = tireRadiusOf(be);
-            if (radius <= 1e-6) return 0; // 空轮架：无摩擦接触面
-            // 2) 接触摩擦 μ
-            double mu = touchingFrictionOf(be);
-            // 3) 线速度 v = |ω|·r
-            float speed = ((Number) M_GET_SPEED.invoke(be)).floatValue();
-            double omega = Math.abs((double) speed);
-            double v = WheelStressFormula.linearVelocityOf(omega, radius);
-            // 4) 法向承载 N
-            double normalN = normalLoadOf(be);
-            // 5) 公式换算 SU（含空转固定消耗；运行时读配置——此刻 ModConfigSpec 已 build）
-            double baseSU = readIdleBaseSU();
-            double omegaRef = readIdleOmegaRef();
-            return WheelStressFormula.stressOf(mu, normalN, v, radius, WATTS_PER_SU,
-                    baseSU, omegaRef);
+            if (radius <= 1e-6) return 0; // 空轮架（无轮胎）不计轮子应力
+            // Create getSpeed() 是【RPM】语义
+            float speedRpm = ((Number) M_GET_SPEED.invoke(be)).floatValue();
+            return computeStress(be, Math.abs((double) speedRpm));
         } catch (Throwable t) {
             return 0;
         }
+    }
+
+    /**
+     * 读取轮子应力（SU）——按【指定转速 RPM】计算。
+     * ⚠ 网络账本（超载判定）用【理论转速】——否则超载→降速→SU(实际)变小→误判
+     *   "应力足够"但转速不恢复。用于 KineticNetworkStressMixin.getActualStressOf。
+     */
+    public static double frictionStressOfAt(Object be, double rpm) {
+        try {
+            ensureInit();
+            if (!ready() || be == null) return 0;
+            double radius = tireRadiusOf(be);
+            if (radius <= 1e-6) return 0;
+            return computeStress(be, Math.abs(rpm));
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /**
+     * 核心：SU = (baseImpact + N×weightPerKg) × |rpm|。
+     * baseImpact 默认 16（1 转速=16 应力，原版基线）；N 为轮胎所受重量(kg)；
+     * weightPerKg 每 kg 额外系数。静止 rpm=0 → 0（不转不耗）。
+     */
+    private static double computeStress(Object be, double rpm) {
+        try {
+            boolean clientSide = be instanceof net.minecraft.world.level.block.entity.BlockEntity b
+                    && b.getLevel() != null && b.getLevel().isClientSide();
+            double normalN = normalLoadOf(be, clientSide);
+        // ★ 2026-09-14 轮胎拟真：SU 切【真实摩擦功率】（用户拍板）
+        //   命中 TirePowerCache（轮胎模型算出的 P = |Fx·vx| + |Fy·vy|）→ SU = P / wattPerSU；
+        //   未命中/过期 → 自动回退下面的 v9 公式。
+        if (com.hdf.cryptand.neoforge.sable.config.ConfigSable.SABLE_TIRE_SU_FROM_FRICTION.get()) {
+            try {
+                final Object bp = com.hdf.cryptand.neoforge.sable.tire.impl.TireReflect.blockPos(be);
+                if (bp != null) {
+                    final long key = com.hdf.cryptand.neoforge.sable.tire.impl.TireReflect.posKey(bp);
+                    final com.hdf.cryptand.neoforge.sable.tire.impl.TirePowerCache.Sample sample =
+                            com.hdf.cryptand.neoforge.sable.tire.impl.TirePowerCache.get(key);
+                    if (sample != null && key != 0L) {
+                        final double wattPerSu = com.hdf.cryptand.neoforge.sable.config.ConfigSable
+                                .SABLE_TIRE_WATT_PER_SU.get();
+                        return wattPerSu <= 1.0e-9 ? 0.0 : sample.watts() / wattPerSu;
+                    }
+                }
+            } catch (final Throwable ignored) {
+                // 反射/配置异常 → 回退 v9 公式
+            }
+        }
+
+            double base = readBaseImpactPerRpm();
+            double wkg = readWeightPerKg();
+            double su = WheelStressFormula.stressOf(base, normalN, wkg, rpm);
+            // 诊断节流 5s 确认公式真实计算生效（N/rpm/base/w/SU）
+            long now = System.currentTimeMillis();
+            if (now - WS_DBG_LAST >= 5000) {
+                WS_DBG_LAST = now;
+                LOGGER.info("[WheelStress] " + be.getClass().getSimpleName()
+                        + " N=" + fmt(normalN) + " rpm=" + fmt(rpm)
+                        + " base=" + fmt(base) + " w/kg=" + fmt(wkg)
+                        + " -> SU=" + fmt(su));
+            }
+            return su;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /** 格式化双精度（%.2f） */
+    private static String fmt(double d) {
+        return String.format("%.2f", d);
     }
 
     /** 轮胎半径（m）。无轮胎/读取失败 → 0（空轮架无摩擦面，SU 0 正确）。 */
@@ -160,60 +246,72 @@ public final class WheelStressAccess {
     }
 
     /**
-     * 法向承载 N（kg）：Sable 装置实时质量。优先用 MassData.getInverseNormalMass
-     * （法向质量；悬空 → 0 精确），回退 getMass()（整车质量）。
-     *
-     * ⚠ 单轮分摊：N_轮 ≈ M_总 / 轮数（均分重心，简化；重型航空器足够——
-     * 后续可经 WheelMount 数量精确化）。
+     * 法向承载 N（kg）：
+     *  - 服务端：Sable 结构总质量（MassData.getMass 稳定；不再用波动的 getInverseNormalMass），
+     *    算到后顺手写入同步缓存（供 write 带出）
+     *  - 客户端：NBT 同步缓存（客户端 ClientSubLevel 无质量 API，2026-08-29 实锤）
+     * 2026-08-29 实测日志：服务端 N=6.65~7.69（结构小），客户端 N=0 → 恒 4 根因。
      */
-    private static double normalLoadOf(Object be) {
+    private static double normalLoadOf(Object be, boolean clientSide) {
         try {
-            if (mSableHelper == null || M_GET_CONTAINING == null) return 0;
-            Object sub = M_GET_CONTAINING.invoke(mSableHelper, be);
-            if (sub == null) return 0; // 不在亚层（普通世界）→ 0
-            Object mass = M_GET_MASS_TRACKER.invoke(sub);
-            if (mass == null) return 0;
-            return massValue(mass);
+            if (!clientSide) {
+                double m = structureMassOf(be);
+                if (m > 0) {
+                    cacheStructureMass(
+                            ((net.minecraft.world.level.block.entity.BlockEntity) be)
+                                    .getBlockPos(), m);
+                    return m;
+                }
+            }
+            // 客户端 / 服务端反射失败 → 读 NBT 同步缓存
+            double cached = structureMassAt(
+                    ((net.minecraft.world.level.block.entity.BlockEntity) be).getBlockPos());
+            if (cached > 0) return cached;
+            LOGGER.warn("[WheelStress] normalN=0 (clientSide=" + clientSide
+                    + ", no mass source)");
+            return 0;
         } catch (Throwable t) {
             return 0;
         }
     }
 
-    /** 空转固定应力（SU，配置 aeroWheelIdleStressSU；0=不启用）。运行时安全读（spec 已 build）。 */
-    private static double readIdleBaseSU() {
+    /**
+     * 服务端：Sable 结构总质量（kg）。MassData.getMass() 稳定总质量；
+     * 不在亚层 / 反射失败 → 0。客户端调用（M_GET_MASS_TRACKER 取自 ServerSubLevel，
+     * ClientSubLevel 无此方法 → invoke 抛异常被吞 → 0）→ 走缓存。
+     * public：供 KineticStressHookMixin.write 注入（服务端算好写 NBT 同步客户端）。
+     */
+    public static double structureMassOf(Object be) {
         try {
-            return com.hdf.cryptand.neoforge.core.config.ConfigLoad
-                    .AERO_WHEEL_IDLE_STRESS_SU.get();
+            if (mSableHelper == null || M_GET_CONTAINING == null) return 0;
+            Object sub = M_GET_CONTAINING.invoke(mSableHelper, be);
+            if (sub == null) return 0;
+            Object mass = M_GET_MASS_TRACKER.invoke(sub);
+            if (mass == null) return 0;
+            Method getMass = mass.getClass().getMethod("getMass");
+            Object m = getMass.invoke(mass);
+            return (m instanceof Number n && Double.isFinite(n.doubleValue())
+                    && n.doubleValue() > 0) ? n.doubleValue() : 0;
         } catch (Throwable t) {
-            return 0.0;
+            return 0;
         }
     }
 
-    /** 固定项平滑参考角速度（rad/s，配置 aeroWheelIdleOmegaRef）。 */
-    private static double readIdleOmegaRef() {
+    /** 基础系数（每转速 SU；配置 aeroWheelBaseImpact；默认 16=原版 1转速16应力）。 */
+    private static double readBaseImpactPerRpm() {
         try {
-            return com.hdf.cryptand.neoforge.core.config.ConfigLoad
-                    .AERO_WHEEL_IDLE_OMEGA_REF.get();
+            return ConfigAero.AERO_WHEEL_BASE_IMPACT.get();
         } catch (Throwable t) {
-            return 1.0;
+            return 16.0;
         }
     }
 
-    /** MassData 真实质量：法向质量（含悬空判 0）或整车质量。 */
-    private static double massValue(Object mass) throws Exception {
-        if (M_GET_INVERSE_NORMAL_MASS != null) {
-            try {
-                Object invN = M_GET_INVERSE_NORMAL_MASS.invoke(mass,
-                        new org.joml.Vector3d(0, 0, 0), new org.joml.Vector3d(0, 0, 0));
-                if (invN instanceof Number num && num.doubleValue() > 1e-9) {
-                    return 1.0 / num.doubleValue();
-                }
-                // 悬空/失效 → 回退整车质量（仍有承载）
-            } catch (Throwable ignored) {
-            }
+    /** 每 kg 载荷额外系数（配置 aeroWheelWeightPerKg；默认 0.01=100kg→系数+1）。 */
+    private static double readWeightPerKg() {
+        try {
+            return ConfigAero.AERO_WHEEL_WEIGHT_PER_KG.get();
+        } catch (Throwable t) {
+            return 0.01;
         }
-        Method getMass = mass.getClass().getMethod("getMass");
-        Object m = getMass.invoke(mass);
-        return m instanceof Number n && n.doubleValue() > 0 ? n.doubleValue() : 0;
     }
 }

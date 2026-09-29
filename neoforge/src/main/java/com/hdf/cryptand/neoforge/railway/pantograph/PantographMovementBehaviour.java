@@ -1,10 +1,10 @@
 package com.hdf.cryptand.neoforge.railway.pantograph;
 
 import com.hdf.cryptand.circuitsimulation.netgraph.WireEdge;
-import com.hdf.cryptand.neoforge.railway.RailwayPartialModels;
 import com.hdf.cryptand.neoforge.cee.CeeTerminalSupport;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
+import com.hdf.cryptand.neoforge.railway.RailwayPartialModels;
 import com.hdf.cryptand.neoforge.railway.train.TrainTapCache;
-import com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.simibubi.create.api.behaviour.movement.MovementBehaviour;
 import com.simibubi.create.content.contraptions.behaviour.MovementContext;

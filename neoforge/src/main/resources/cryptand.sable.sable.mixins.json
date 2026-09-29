@@ -1,0 +1,24 @@
+{
+  "required": false,
+  "package": "com.hdf.cryptand.neoforge.cryptandsable_compat.mixin.sable",
+  "plugin": "com.hdf.cryptand.neoforge.cryptandsable_compat.mixin.sable.SableCompatMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "client": [
+    "BlockGetterClipMixin",
+    "KeyboardDebugMixin"
+  ],
+  "mixins": [
+    "BlockStateMixin",
+    "ClientLevelContainerMixin",
+    "ClientLevelMixin",
+    "EntityCollisionMixin",
+    "EntityMovementCompatMixin",
+    "HangingEntityAccessor",
+    "ServerLevelContainerMixin",
+    "SubLevelAssemblyHelperCompatMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

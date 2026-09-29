@@ -19,9 +19,9 @@ package com.hdf.cryptand.neoforge.simserver;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.hdf.cryptand.circuitsimulation.core.SimulationCoreRegistry;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
-import com.hdf.cryptand.circuitsimulation.core.SimulationCoreRegistry;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -29,11 +29,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 public final class SimHttpServer {
 

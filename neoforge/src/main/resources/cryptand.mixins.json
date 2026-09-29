@@ -5,7 +5,9 @@
   "compatibilityLevel": "JAVA_21",
   "minVersion": "0.8",
   "client": [],
-  "mixins": [],
+  "mixins": [
+    "FakePlayerPlayerListMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

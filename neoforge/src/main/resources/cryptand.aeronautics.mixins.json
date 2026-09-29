@@ -6,7 +6,9 @@
   "minVersion": "0.8",
   "client": [],
   "mixins": [
-    "WheelStressMixin"
+    "KineticNetworkStressMixin",
+    "KineticStressHookMixin",
+    "ComparatorDirectionalOutputMixin"
   ],
   "injectors": {
     "defaultRequire": 1

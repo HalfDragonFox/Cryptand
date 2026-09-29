@@ -10,16 +10,15 @@ package com.hdf.cryptand.neoforge.powergrid.device.heater;
 import com.hdf.cryptand.circuitsimulation.model.Network;
 import com.hdf.cryptand.circuitsimulation.model.composite.CompositeModel;
 import com.hdf.cryptand.circuitsimulation.model.composite.MotorModel;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceCache;
-import com.hdf.cryptand.neoforge.powergrid.adapter.DeviceThermalStore;
-import com.hdf.cryptand.neoforge.powergrid.device.SourceCacheAssembler;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceCache;
+import com.hdf.cryptand.neoforge.powergrid.state.DeviceThermalStore;
 import com.hdf.cryptand.neoforge.powergrid.device.DeviceWire;
-import com.hdf.cryptand.neoforge.powergrid.device.Assembler;
-import com.hdf.cryptand.neoforge.powergrid.device.ThermalDiffusionConfig;
+import com.hdf.cryptand.neoforge.powergrid.device.cache.SourceCacheAssembler;
+import com.hdf.cryptand.neoforge.powergrid.device.thermal.ThermalDiffusionConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
-public final class HeaterAssembler implements SourceCacheAssembler {
+public final class HeaterAssembler implements com.hdf.cryptand.neoforge.powergrid.device.ProxiableAssembler {
 
     public static final HeaterAssembler INSTANCE = new HeaterAssembler();
 
@@ -44,15 +43,28 @@ public final class HeaterAssembler implements SourceCacheAssembler {
         return DeviceWire.of(DeviceWire.field(be, "wire"));
     }
 
+    /** ⚠ 2026-08-30 适配【设备接线柱连接】（用户：加热器改经设备接线柱连接）：
+     *  wire 字段可能未建立（原版 buildCircuit 经接线柱/端子建 wire，被接管后
+     *  可能不触发）→ 回退读 resistance() 方法（原版 buildCircuit 同源），
+     *  保证加热器电阻总能取到。 */
+    private static double resistanceOf(BlockEntity be) {
+        DeviceWire dw = DeviceWire.of(DeviceWire.field(be, "wire"));
+        if (dw.hasResistance() && dw.resistance > 0) return dw.resistance;
+        try {
+            Object v = DeviceWire.call(be, "resistance");
+            if (v instanceof Number n) return n.doubleValue();
+        } catch (Throwable ignored) {
+        }
+        return 0;
+    }
+
     /** 主线程每 tick：读 wire → 原子写输入槽（电阻/电感/开关态） */
     @Override
     public void refreshCache(BlockEntity be, DeviceCache cache) {
         try {
-            DeviceWire dw = wireOf(be);
-            double r = (dw.hasResistance() && dw.resistance > 0) ? dw.resistance : 0;
+            double r = resistanceOf(be);
             DeviceCache.Data old = cache.in();
-            cache.setIn(new DeviceCache.Data(r, Math.max(dw.inductance, 0),
-                    0, 0, 0, dw.enabled, old.version + 1));
+            cache.setIn(new DeviceCache.Data(r, 0, 0, 0, 0, true, old.version + 1));
         } catch (Throwable ignored) {
         }
     }
@@ -77,12 +89,11 @@ public final class HeaterAssembler implements SourceCacheAssembler {
     @Override
     public CompositeModel assemble(BlockEntity be, int a, int b, Network net) {
         try {
-            DeviceWire dw = wireOf(be);
-            if (dw.enabled && dw.hasResistance() && dw.resistance > 0) {
+            double r = resistanceOf(be);
+            if (r > 0) {
                 int x = net.addNode().id;
                 // 加热器是发热设备：高耐温模型（maxTemp 400°C）
-                return new MotorModel(a, b, x, dw.resistance,
-                        Math.max(dw.inductance, 0),
+                return new MotorModel(a, b, x, r, 0,
                         DeviceThermalStore.thermalForHighTemp(be.getBlockPos()));
             }
         } catch (Throwable ignored) {

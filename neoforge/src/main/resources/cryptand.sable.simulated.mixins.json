@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "package": "com.hdf.cryptand.neoforge.cryptandsable_compat.mixin.simulated",
+  "plugin": "com.hdf.cryptand.neoforge.cryptandsable_compat.mixin.CryptandSableGateMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "mixins": [
+    "PhysicsAssemblerCompatMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

@@ -1,7 +1,6 @@
 package com.hdf.cryptand.integratednetwork;
 
 import com.hdf.cryptand.integratednetwork.TransportEvent.Kind;
-import com.hdf.cryptand.integratednetwork.TransportGraph.Adj;
 import com.hdf.cryptand.integratednetwork.TransportGraph.InFlight;
 import com.hdf.cryptand.integratednetwork.TransportGraph.PayloadBuffer;
 
@@ -77,8 +76,8 @@ public final class TransportSimulator {
             }
         }
 
-        // ---- 2) 路由：脏则重算 ----
-        if (g.routesDirty()) computeRoutes();
+        // ---- 2) 路由：按需（懒）——nextHop 首次访问自动失效/重算，无需每帧全对全 Dijkstra ----
+        //（只对实际请求的 (源,目标) 对算一次并缓存，避免 O(N²) 路由表内存）
 
         // ---- 3) 移动：按优先级把缓冲负载压入下一段边（吞吐/丢包约束） ----
         Map<Long, Double> edgeMoved = new HashMap<>();
@@ -111,55 +110,12 @@ public final class TransportSimulator {
     }
 
     /**
-     * 重算全图路由表（每源 Dijkstra 最短路径 → 下一跳）。
-     * 拓扑变更后无需显式调用——{@link #step()} 检测路由脏会自动重算；本方法供
-     * {@code ROUTE} 操作显式触发（只刷新路由，不推进流动）。
+     * 显式刷新路由（按需路由下：清空懒缓存，使下次 {@code nextHop} 重新按需计算；
+     * 不推进流动）。拓扑变更后无需显式调用——nextHop 首次访问自动失效重算。
      */
     public void computeRoutes() {
-        Map<Object, Map<Object, Object>> r = new HashMap<>();
-        for (TransportNode src : g.nodes()) {
-            r.put(src.id, dijkstraNextHops(src.id));
-        }
-        g.setRoutes(r);
+        g.markRoutesDirty();
+        g.clearLazyRoutes();
         g.markRoutesClean();
-    }
-
-    /** 从 src 到全图可达节点的最短路径【下一跳】表（不含 src 自身）；边代价即 cost。 */
-    private Map<Object, Object> dijkstraNextHops(Object src) {
-        Map<Object, Double> dist = new HashMap<>();
-        Map<Object, Object> firstHop = new HashMap<>(); // target → 从 src 出发的第一跳
-        PriorityQueue<Entry> pq = new PriorityQueue<>(Comparator.comparingDouble(e -> e.dist));
-        dist.put(src, 0.0);
-        pq.add(new Entry(src, 0.0));
-        while (!pq.isEmpty()) {
-            Entry top = pq.poll();
-            Object u = top.id;
-            double d = top.dist;
-            if (d > dist.getOrDefault(u, Double.POSITIVE_INFINITY) + 1e-9) continue; // 过期条目
-            for (TransportGraph.Adj adj : g.adjacent(u)) {
-                TransportEdge e = g.edge(adj.edgeId);
-                if (e == null) continue;
-                Object v = adj.node;
-                double nd = d + Math.max(0.001, e.cost); // cost<=0 兜底 0.001
-                if (nd < dist.getOrDefault(v, Double.POSITIVE_INFINITY) - 1e-9) {
-                    Object hop = u.equals(src) ? v : firstHop.getOrDefault(u, v);
-                    dist.put(v, nd);
-                    firstHop.put(v, hop);
-                    pq.add(new Entry(v, nd));
-                }
-            }
-        }
-        return firstHop;
-    }
-
-    /** Dijkstra 队列条目（惰性过期：poll 后按 dist 校验，满足失效节点） */
-    private static final class Entry {
-        final Object id;
-        final double dist;
-
-        Entry(Object id, double dist) {
-            this.id = id;
-            this.dist = dist;
-        }
     }
 }

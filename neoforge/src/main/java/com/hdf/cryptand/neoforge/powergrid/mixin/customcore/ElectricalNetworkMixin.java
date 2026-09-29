@@ -14,8 +14,10 @@
 
 package com.hdf.cryptand.neoforge.powergrid.mixin.customcore;
 
-import com.hdf.cryptand.neoforge.powergrid.adapter.CryptandMna;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.simulator.config.ConfigCircuit;
+import com.hdf.cryptand.neoforge.powergrid.engine.CryptandMna;
+import com.hdf.cryptand.neoforge.powergrid.network.CryptandTopologyManager;
 import org.patryk3211.powergrid.electricity.sim.AbstractElectricWire;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
 import org.patryk3211.powergrid.electricity.sim.solver.IMNA;
@@ -49,7 +51,7 @@ public abstract class ElectricalNetworkMixin {
 
     @Unique
     private void cryptand$maybeReplaceMna() {
-        if (!ConfigLoad.ENABLE_CRYPTAND_SOLVER.get()) return;   // 关闭 → 保持 PowerGrid 原求解器
+        if (!ConfigCircuit.ENABLE_CRYPTAND_SOLVER.get()) return;   // 关闭 → 保持 PowerGrid 原求解器
         this.mna = new CryptandMna((ElectricalNetwork) (Object) this);
     }
 
@@ -69,7 +71,7 @@ public abstract class ElectricalNetworkMixin {
     @Inject(method = "addWire", at = @At("TAIL"))
     private void cryptand$topoWireAdd(AbstractElectricWire wire, CallbackInfo ci) {
         try {
-            if (ConfigLoad.ENABLE_CRYPTAND_SOLVER.get()
+            if (ConfigCircuit.ENABLE_CRYPTAND_SOLVER.get()
                     && !(wire instanceof org.patryk3211.powergrid.electricity.sim.SwitchedWire)) {
                 ElectricalNetwork self = (ElectricalNetwork) (Object) this;
                 // 诊断（节流 2s）：持续 addWire → netVer 持续变 → 后台构建
@@ -77,13 +79,13 @@ public abstract class ElectricalNetworkMixin {
                 long now = System.currentTimeMillis();
                 if (now - TOPO_WIRE_DBG_LAST >= 2000) {
                     TOPO_WIRE_DBG_LAST = now;
-                    com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                    CryptandNeoForge.WAF_LOGGER.info(
                             "[TopoWireAdd] wire={} netVer={}",
                             wire == null ? "null" : wire.getClass().getSimpleName(),
-                            com.hdf.cryptand.neoforge.powergrid.adapter.CryptandTopologyManager.get()
+                            CryptandTopologyManager.get()
                                     .netVersionOf(self));
                 }
-                com.hdf.cryptand.neoforge.powergrid.adapter.CryptandTopologyManager.get()
+                CryptandTopologyManager.get()
                         .postWireConnect(self);
             }
         } catch (Throwable ignored) {
@@ -95,26 +97,34 @@ public abstract class ElectricalNetworkMixin {
     @Inject(method = "removeWire", at = @At("TAIL"))
     private void cryptand$topoWireRemove(AbstractElectricWire wire, CallbackInfo ci) {
         try {
-            if (ConfigLoad.ENABLE_CRYPTAND_SOLVER.get()
+            if (ConfigCircuit.ENABLE_CRYPTAND_SOLVER.get()
                     && !(wire instanceof org.patryk3211.powergrid.electricity.sim.SwitchedWire)) {
-                com.hdf.cryptand.neoforge.powergrid.adapter.CryptandTopologyManager.get()
+                CryptandTopologyManager.get()
                         .postWireDisconnect((ElectricalNetwork) (Object) this);
             }
         } catch (Throwable ignored) {
         }
     }
 
-    /** 网络合并（merge：连接两块网络）→ 跨网络结构变化：本网络 + other 网络级失效
-     *  + 全局兜底（物理连通改变 → DSU 需全量重建；合并是低频大变化，全量可接受）。 */
+    /**
+     * 网络合并（merge：一根导线把两块网络连成一个）—— 【精确到这两个网络】。
+     *
+     * 2026-09-13 用户："网络重建需要精确到具体网络，比如导线连接时连到两个不同
+     * 网络则发合并，不能全世界重建"。
+     *
+     * 原实现在精确失效 self/other 之后【又补了一发 markTopologyChanged()】
+     * （topoVersion++ + EngineMeasurements.invalidateAll）⇒ 所有网络缓存作废、
+     * 全世界重建 —— 已删除。现在合并语义完全由 `postWireMerge` 表达：
+     * 只作废这两个网络（其余网络缓存命中 → 零感知），DSU 仍会因 topoVersion++
+     * 重新分组（markNetworkChanged 内部已递增），合并后两块网络自然归同一分量。
+     */
     @Inject(method = "merge", at = @At("TAIL"))
     private void cryptand$topoMerge2(ElectricalNetwork other, CallbackInfo ci) {
         try {
-            if (ConfigLoad.ENABLE_CRYPTAND_SOLVER.get()) {
-                var mgr = com.hdf.cryptand.neoforge.powergrid.adapter.CryptandTopologyManager.get();
+            if (ConfigCircuit.ENABLE_CRYPTAND_SOLVER.get()) {
+                CryptandTopologyManager mgr = CryptandTopologyManager.get();
                 ElectricalNetwork self = (ElectricalNetwork) (Object) this;
-                mgr.postWireConnect(self);
-                if (other != null) mgr.postWireConnect(other);
-                mgr.markTopologyChanged(); // 全局：DSU 全量重建 + 防烧线兜底
+                mgr.postWireMerge(self, other);
             }
         } catch (Throwable ignored) {
         }

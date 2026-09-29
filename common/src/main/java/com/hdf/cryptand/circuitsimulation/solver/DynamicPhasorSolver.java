@@ -33,8 +33,12 @@ public class DynamicPhasorSolver implements Solver {
 
     public static final double GMIN = 1e-7;
 
-    /** 每网络动态相量状态（包络历史） */
-    private static final ConcurrentHashMap<Network, State> STATES = new ConcurrentHashMap<>();
+    /** 每网络动态相量状态（包络历史）。
+     *  ⚠ 2026-08-30 审计（solver L5）：弱引用——原强引用使弃置的 Network 对象
+     *  永久驻留（每次网络重建一个）→ 长会话内存泄漏；弱引用下 Network 无引用
+     *  即被 GC 自动清理（synchronizedMap 保证并发安全）。 */
+    private static final java.util.Map<Network, State> STATES =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     /** 动态相量状态：节点包络电压历史 + 电感电流包络历史 */
     static final class State {
@@ -81,7 +85,11 @@ public class DynamicPhasorSolver implements Solver {
             m.addY(i, i, new Complex(GMIN, 0));
         }
         Complex[] vn = ComplexMnaSolver.solveMatrix(m);
-        if (vn == null || vn.length < n) vn = st.vOld;
+        // ⚠ 2026-08-30 审计 M8：矩阵求解失败/奇异 → 标记未收敛（调用方不采用
+        // 结果），不再静默回退旧状态当成功（原恒 converged=true 掩盖发散）。
+        // 失败时仍用 vOld 保持状态（不推进），语义 = "本轮无有效解"。
+        boolean matrixOk = vn != null && vn.length >= n;
+        if (!matrixOk) vn = st.vOld;
 
         // 更新状态
         Complex[] vNew = new Complex[n];
@@ -104,7 +112,8 @@ public class DynamicPhasorSolver implements Solver {
         double[] mag = new double[n];
         for (int i = 0; i < n; i++) mag[i] = vNew[i].abs() / Math.sqrt(2.0); // RMS
         long nanos = System.nanoTime() - t0;
-        SolveResult res = new SolveResult(mag, vNew, true, 1, nanos, SolveMode.COMPLEX_AC);
+        // ⚠ 2026-08-30 审计 M8：converged = matrixOk（矩阵失败不再恒 true）
+        SolveResult res = new SolveResult(mag, vNew, matrixOk, 1, nanos, SolveMode.COMPLEX_AC);
         try {
             TerminalRecorder.record(net, res);
         } catch (Throwable ignored) {

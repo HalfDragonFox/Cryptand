@@ -1,0 +1,7 @@
+{
+ "credit": "Adapted from OpenComputers (textures CC0 1.0). Cryptand chip item (chip_gpu).",
+ "parent": "item/generated",
+ "textures": {
+  "layer0": "cryptand:item/chip_gpu"
+ }
+}

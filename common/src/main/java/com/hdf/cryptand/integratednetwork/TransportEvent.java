@@ -16,7 +16,11 @@ public final class TransportEvent {
         /** 负载抵达目标（或任意出口）→ 送达 */
         DELIVERED,
         /** 负载被丢弃（缓冲满 {@code "capacity"} / 无线链路丢包 {@code "loss"}） */
-        DROPPED
+        DROPPED,
+        /** 传输结算：从输入容器移除内容（主线程执行 IO；nodeId=输入容器键） */
+        EXTRACT,
+        /** 传输结算：向输出容器写入内容（主线程执行 IO；nodeId=输出容器键） */
+        WRITE
     }
 
     /** 事件类型 */

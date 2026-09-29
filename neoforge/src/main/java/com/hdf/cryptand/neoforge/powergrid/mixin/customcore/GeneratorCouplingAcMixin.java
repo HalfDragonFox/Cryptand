@@ -13,10 +13,10 @@
 
 package com.hdf.cryptand.neoforge.powergrid.mixin.customcore;
 
-import com.hdf.cryptand.neoforge.powergrid.adapter.CommutatorStateHolder;
-import com.hdf.cryptand.neoforge.powergrid.adapter.MultimeterDebug;
-import com.hdf.cryptand.neoforge.core.config.ConfigLoad;
-import net.minecraft.core.BlockPos;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.powergrid.state.CommutatorStateHolder;
+import com.hdf.cryptand.neoforge.powergrid.measurement.MultimeterDebug;
+import com.hdf.cryptand.neoforge.powergrid.config.ConfigPowerGrid;
 import org.patryk3211.powergrid.electricity.sim.ElectricalNetwork;
 import org.patryk3211.powergrid.electricity.sim.special.GeneratorCoupling;
 import org.patryk3211.powergrid.electricity.sim.special.IRotor;
@@ -51,7 +51,7 @@ public abstract class GeneratorCouplingAcMixin {
                 freq = MultimeterDebug.getNetworkFrequencyHz(en);
             }
 
-            double threshold = ConfigLoad.MOTOR_MAX_DRIVE_FREQUENCY_HZ.get();
+            double threshold = ConfigPowerGrid.MOTOR_MAX_DRIVE_FREQUENCY_HZ.get();
             boolean armAc = freq >= threshold;      // 电枢是否交流
             boolean acExc = isAcExcitation(self);   // 本机励磁是否交流（读换向器实例字段）
             // 发电机模式 = 转子被外部机械驱动（GeneratorClutch 连接 Create 动力，
@@ -83,7 +83,7 @@ public abstract class GeneratorCouplingAcMixin {
                     //   带载：网络被拖慢 → 反向力 → 转子减速（转速受外部环境影响）
                     //   外部反向拖动：网络反转 → 大反向力 → 转子反转 → EMF 反向
                     //     → 电流反向 → 再生制动 + I²R 发热
-                    double loadK = ConfigLoad.MOTOR_LOAD_COUPLING.get();
+                    double loadK = ConfigPowerGrid.MOTOR_LOAD_COUPLING.get();
                     if (loadK > 0) {
                         double netSpeed = 0;
                         try {
@@ -126,7 +126,7 @@ public abstract class GeneratorCouplingAcMixin {
                 // 临时诊断：节流打印关键值与最终施力（每 100 次）——定位"不转"用
                 if (++cryptand$diagCounter % 100 == 0) {
                     double fRotorD = Math.abs(r.getAngularVelocityRadians()) / (2 * Math.PI);
-                    com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                    CryptandNeoForge.WAF_LOGGER.info(
                             "[MotorDiag] freq={} armAc={} acExc={} generating={} field={} current={} fRotor={}Hz multiTick={} force={}",
                             String.format("%.2f", freq), armAc, acExc, generating,
                             String.format("%.3f", f), String.format("%.3f", current),

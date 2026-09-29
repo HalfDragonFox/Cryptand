@@ -17,12 +17,13 @@
 
 package com.hdf.cryptand.neoforge.powergrid.device.wire;
 
+import com.hdf.cryptand.neoforge.core.wire.SaggingWireType;
 import com.hdf.cryptand.circuitsimulation.model.Network;
 import com.hdf.cryptand.circuitsimulation.model.composite.WireComposite;
 import com.hdf.cryptand.circuitsimulation.model.thermal.ThermalModel;
 import com.hdf.cryptand.circuitsimulation.netgraph.WireSegment;
-import com.hdf.cryptand.neoforge.powergrid.adapter.PhasorNetworkBuilder;
-import com.hdf.cryptand.neoforge.powergrid.adapter.WireThermalStore;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireSegments;
+import com.hdf.cryptand.neoforge.powergrid.state.WireThermalStore;
 
 public class WireAssembler {
 
@@ -47,11 +48,23 @@ public class WireAssembler {
         if (r <= 1e-9) return null;
         // 温度模型（段路径 key：同段统一温度/统一烧毁；散热/热容按段长缩放，
         // 2026-08-19 "25°C 室温下金导线 ≥160A 额定"）
-        ThermalModel th = WireThermalStore.thermalFor(seg.key, seg.length);
-        WireComposite wc = new WireComposite(a, b, r, th, seg.key);
+        // ⚠ 2026-09-12 用户："发热按照公式来计算…25 度时保持额定，而不是强制限制"
+        //   + "其他的参数按照现有的最大电流作为额定值"：
+        //   额定电流（maximumCurrent）只用于【标定散热】——
+        //     G = 额定功率 / RATED_RISE_C   ⇒ 额定电流下稳态温升 = RATED_RISE_C
+        //   发热本身由 WireComposite.lossPower 按完整 I²R 公式给出（不再扣减）。
+        double ratedW = 0;
+        if (type != null) {
+            double maxA = type.maximumCurrent();
+            if (maxA > 0) ratedW = maxA * maxA * r;
+        }
+        double gTotal = ratedW > 0
+                ? ratedW / WireThermalStore.RATED_RISE_C : 0;
+        ThermalModel th = WireThermalStore.thermalFor(seg.key, seg.length, gTotal);
+        WireComposite wc = new WireComposite(a, b, r, th, seg.key, ratedW);
         net.addComposite(wc);
         // 绑定：实际段 ↔ 虚拟元件（段注册表，烧毁/剪线按段定位）
-        PhasorNetworkBuilder.registerSegment(seg.key, seg.edges);
+        WireSegments.registerSegment(seg.key, seg.edges);
         return wc;
     }
 }

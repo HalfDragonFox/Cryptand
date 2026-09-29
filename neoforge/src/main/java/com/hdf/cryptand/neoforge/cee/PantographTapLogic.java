@@ -13,6 +13,10 @@
  */
 package com.hdf.cryptand.neoforge.cee;
 
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.PowerGridWireConverter;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.WireNetworkManager;
+import com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock;
 import com.hdf.cryptand.neoforge.railway.pantograph.PantographTapCache;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -33,7 +37,7 @@ public final class PantographTapLogic {
     public static boolean isSelfManaged(Level level) {
         try {
             if (level == null) return false;
-            if (!com.hdf.cryptand.neoforge.powergrid.adapter.PowerGridWireConverter.isEnabled())
+            if (!PowerGridWireConverter.isEnabled())
                 return false;
             return CeeTerminalSupport.ceeEnabled();
         } catch (Throwable ignored) {
@@ -49,7 +53,7 @@ public final class PantographTapLogic {
                                     boolean extended, Consumer<Float> setTarget) {
         try {
             if (level == null || pos == null || state == null) return;
-            var mgr = com.hdf.cryptand.neoforge.powergrid.adapter.WireNetworkManager.get();
+            var mgr = WireNetworkManager.get();
             double reach = 1.625;
             float yaw = CeeTerminalSupport.facingYRotOf(state);
             com.hdf.cryptand.circuitsimulation.netgraph.WireEdge best = null;
@@ -91,7 +95,7 @@ public final class PantographTapLogic {
                 long now = System.currentTimeMillis();
                 if (now - lastDbg > 2000) {
                     lastDbg = now;
-                    com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                    CryptandNeoForge.WAF_LOGGER.info(
                             "[PantoScan] edges={} catenary={} hit={} pos={}",
                             total, cat, best != null, pos);
                 }
@@ -152,8 +156,8 @@ public final class PantographTapLogic {
                 ? state.getValue(net.minecraft.world.level.block.HorizontalDirectionalBlock.FACING)
                 : net.minecraft.core.Direction.NORTH;
         boolean isDouble = state.hasProperty(
-                com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock.DOUBLE)
-                && state.getValue(com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock.DOUBLE);
+                PantographBlock.DOUBLE)
+                && state.getValue(PantographBlock.DOUBLE);
         net.minecraft.core.Direction.Axis axis = facing.getAxis();
         if (isDouble) {
             float lowerArmRadians = (-90 + extensionState * 27) * net.minecraft.util.Mth.DEG_TO_RAD;

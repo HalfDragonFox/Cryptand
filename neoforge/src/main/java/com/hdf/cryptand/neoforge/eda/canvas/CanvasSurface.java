@@ -59,9 +59,11 @@ public class CanvasSurface extends UIElement {
 
     private final int width;
     private final int height;
-    private final NativeImage image;
-    private final DynamicTexture texture;
-    private final ResourceLocation textureId;
+    /** 像素缓冲与纹理**惰性创建**（见 {@link #ensureInit()}）：服务端构建 UI 树时不碰客户端资源 */
+    private NativeImage image;
+    private DynamicTexture texture;
+    private ResourceLocation textureId;
+    private boolean initTried;
 
     private volatile boolean dirty = true;
     private boolean disposed;
@@ -74,6 +76,22 @@ public class CanvasSurface extends UIElement {
     /** 手动记录的显示区域（相对 UI 坐标系）；设置后 drawContents 优先用它渲染 */
     private int renderX, renderY, renderW, renderH;
     private boolean hasRenderRegion;
+    /**
+     * 最近一次渲染的**显示缩放**（显示尺寸 ÷ 缓冲尺寸）。文字与子类叠加层（{@link #renderExtraAt}）
+     * 都按缓冲坐标给位置，必须乘上它才不会与拉伸后的像素错位（2026-09-29 实测：面板小的时候
+     * 画布被等比缩小，文字全跑偏）。
+     */
+    private float renderScaleX = 1.0F;
+    private float renderScaleY = 1.0F;
+    /**
+     * 等比显示时，画面在元素区域内的**居中偏移**（letterbox 留边）。
+     *
+     * <p>用户 2026-09-29 点破的真问题：以前直接把缓冲拉伸到布局尺寸（rw/width、rh/height 各算一个比例），
+     * 一旦可用区不是 600:350，两个比例就不相等 ⇒ 文字、物品图标、鼠标命中全都会偏。
+     * 现在统一按**等比缩放 + 居中**算显示矩形，缩放只有一个值，偏移由这里给出。</p>
+     */
+    private int renderOffX;
+    private int renderOffY;
 
     public CanvasSurface(int width, int height) {
         this(width, height, false, false);
@@ -96,17 +114,49 @@ public class CanvasSurface extends UIElement {
     public CanvasSurface(int width, int height, boolean fill, boolean skipLayout) {
         this.width = Math.max(1, width);
         this.height = Math.max(1, height);
-        this.image = new NativeImage(this.width, this.height, false);
-        this.texture = new DynamicTexture(this.image);
-        this.textureId = ResourceLocation.fromNamespaceAndPath("cryptand",
-                "canvas_" + COUNTER.incrementAndGet());
-        Minecraft.getInstance().getTextureManager().register(this.textureId, this.texture);
         if (!skipLayout) {
             if (fill) {
                 layout(l -> l.flex(1).flexShrink(0));
             } else {
                 layout(l -> l.width(this.width).height(this.height));
             }
+        }
+    }
+
+    /**
+     * 客户端资源惰性初始化（2026-09-29）：像素缓冲 + 纹理只在<b>真正要画</b>时创建。
+     *
+     * <p>为什么：LDLib2 的 UI 树是<b>双端构建</b>的（{@code ModularUIContainerMenu} 构造里就调
+     * {@code createUI}，服务端同样执行），而服务端没有可用的 {@code Minecraft.getInstance()}
+     * （TextureManager / GL 都不在）⇒ 构造期注册纹理会让服务端构建面板时直接 NPE。
+     * 服务端只用到 UI 的逻辑部分（事件 / RPC），不画像素，所以惰性创建两头都成立。</p>
+     *
+     * @return true = 可画（已初始化），false = 现在不能画（服务端 / 已释放 / 初始化失败）
+     */
+    private boolean ensureInit() {
+        if (disposed) {
+            return false;
+        }
+        if (image != null) {
+            return true;
+        }
+        if (initTried) {
+            return false;
+        }
+        initTried = true;
+        try {
+            image = new NativeImage(width, height, false);
+            texture = new DynamicTexture(image);
+            textureId = ResourceLocation.fromNamespaceAndPath("cryptand",
+                    "canvas_" + COUNTER.incrementAndGet());
+            Minecraft.getInstance().getTextureManager().register(textureId, texture);
+            dirty = true;
+            return true;
+        } catch (Throwable t) {
+            image = null;
+            texture = null;
+            textureId = null;
+            return false;
         }
     }
 
@@ -120,8 +170,30 @@ public class CanvasSurface extends UIElement {
         return this;
     }
 
+    /**
+     * 背景层快照（拖动性能优化，2026-09-29）。
+     *
+     * <p>为什么需要：背景（底色 + 网格 + 外框）如果每次都全量重画，就是 20 万次像素写
+     * （clear + 600 条竖线 + 350 条横线）⇒ 单次重绘 5~10ms，再叠一次 840KB 纹理上传，
+     * 拖动时帧率掉下来、手感就"微滞后"。子类可以存一份背景快照，重绘时一次 arraycopy
+     * 回填（微秒级），再只画器件 / 引脚 / 连线。</p>
+     *
+     * @return 像素缓冲的副本（未初始化 / 服务端 ⇒ null）
+     */
+    protected long[] snapshotPixelsUnused() {
+        return null;
+    }
+
+    /** 用 {@link #snapshotPixels()} 存下的背景快照整块回填（false = 快照不可用，调用方自行重画背景）。 */
+    protected boolean restorePixelsUnused(long[] snapshot) {
+        return false;
+    }
+
     /** 导出当前像素缓冲为 PNG（EDA 工具栏 PNG 按钮，2026-08-17） */
     public void savePng(java.nio.file.Path p) throws java.io.IOException {
+        if (!ensureInit()) {
+            throw new java.io.IOException("画布未在客户端初始化，无法导出 PNG");
+        }
         uploadNow();
         image.writeToFile(p);
     }
@@ -137,14 +209,14 @@ public class CanvasSurface extends UIElement {
     }
 
     public CanvasSurface setPixel(int x, int y, int argb) {
-        if (disposed || x < 0 || y < 0 || x >= width || y >= height) return this;
+        if (!ensureInit() || x < 0 || y < 0 || x >= width || y >= height) return this;
         image.setPixelRGBA(x, y, toAbgr(argb));
         dirty = true;
         return this;
     }
 
     public CanvasSurface fillRect(int x0, int y0, int x1, int y1, int argb) {
-        if (disposed) return this;
+        if (!ensureInit()) return this;
         int sx = clamp(x0, 0, width - 1), ex = clamp(x1, 0, width - 1);
         int sy = clamp(y0, 0, height - 1), ey = clamp(y1, 0, height - 1);
         if (sx > ex || sy > ey) return this;
@@ -176,7 +248,7 @@ public class CanvasSurface extends UIElement {
 
     /** Bresenham 直线(写入像素缓冲,无 draw call) */
     public CanvasSurface drawLine(int x0, int y0, int x1, int y1, int argb) {
-        if (disposed) return this;
+        if (!ensureInit()) return this;
         int abgr = toAbgr(argb);
         int dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
         int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
@@ -200,7 +272,7 @@ public class CanvasSurface extends UIElement {
      */
     public CanvasSurface plotValues(int px, int py0, int pw, int ph,
                                     double[] values, double vMin, double vMax, int argb) {
-        if (disposed || values == null || values.length < 2 || pw < 1 || ph < 1) return this;
+        if (!ensureInit() || values == null || values.length < 2 || pw < 1 || ph < 1) return this;
         double range = vMax - vMin;
         if (Math.abs(range) < 1e-12) range = 1.0;
         int abgr = toAbgr(argb);
@@ -233,7 +305,7 @@ public class CanvasSurface extends UIElement {
 
     /** 中点画圆（边框，EDA 元件/焊盘） */
     public CanvasSurface drawCircle(int cx, int cy, int r, int argb) {
-        if (disposed || r < 0) return this;
+        if (!ensureInit() || r < 0) return this;
         int abgr = toAbgr(argb);
         int x = r, y = 0, err = 1 - r;
         while (x >= y) {
@@ -251,7 +323,7 @@ public class CanvasSurface extends UIElement {
 
     /** 折线/多边形（EDA 导线、元件轮廓） */
     public CanvasSurface drawPolygon(float[] xs, float[] ys, int argb, boolean closed) {
-        if (disposed || xs == null || ys == null) return this;
+        if (!ensureInit() || xs == null || ys == null) return this;
         int n = Math.min(xs.length, ys.length);
         for (int i = 0; i + 1 < n; i++) {
             drawLine((int) xs[i], (int) ys[i], (int) xs[i + 1], (int) ys[i + 1], argb);
@@ -292,7 +364,7 @@ public class CanvasSurface extends UIElement {
 
     /** 立即上传像素到纹理(渲染线程) */
     public void uploadNow() {
-        if (disposed || !dirty) return;
+        if (!ensureInit() || !dirty) return;
         try {
             texture.upload();
             dirty = false;
@@ -310,7 +382,7 @@ public class CanvasSurface extends UIElement {
     /** 每帧渲染:一次 blit(1 个 quad),与内容复杂度无关 */
     @Override
     public void drawContents(GUIContext ctx) {
-        if (disposed) return;
+        if (!ensureInit()) return;
         // 诊断（2026-08-17：EDA 画布不显示，确认 drawContents 是否被调用 + 布局缓存值）
         if (CanvasSurface.debugCount++ < 10) {
             com.mojang.logging.LogUtils.getLogger().info(
@@ -344,10 +416,22 @@ public class CanvasSurface extends UIElement {
         GuiGraphics g = ctx.graphics;
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        g.blit(textureId, rx, ry, rw, rh,
-                0.0F, 0.0F, width, height, width, height);
-        renderTextsAt(ctx, rx, ry);
-        renderExtraAt(ctx, rx, ry);
+        // ===== 等比 letterbox：在给定显示区域里按缓冲比例居中缩放（唯一缩放来源）=====
+        final float scale = Math.min(rw / (float) width, rh / (float) height);
+        final int dw = Math.max(1, Math.round(width * scale));
+        final int dh = Math.max(1, Math.round(height * scale));
+        renderOffX = (rw - dw) / 2;
+        renderOffY = (rh - dh) / 2;
+        final int dx = rx + renderOffX;
+        final int dy = ry + renderOffY;
+        renderScaleX = scale;
+        renderScaleY = scale;
+        g.blit(textureId, dx, dy, dw, dh, 0.0F, 0.0F, width, height, width, height);
+        // EDA = 一个"层"：属于画布的内容只画在画布矩形内，超出部分一律不渲染（用户定案 2026-09-29）
+        ctx.enableScissor(dx, dy, dx + dw, dy + dh);   // 用 GUIContext 的 scissor（离屏层下坐标才正确）
+        renderExtraAt(ctx, dx, dy);      // 物品图标先画：文字层与浮层压在上面
+        renderTextsAt(ctx, dx, dy);
+        ctx.disableScissor();
     }
 
     /**
@@ -355,7 +439,7 @@ public class CanvasSurface extends UIElement {
      * 调用方需保证渲染线程；纹理自动上传（若脏）。
      */
     public void renderAt(GUIContext ctx, int x, int y, int w, int h) {
-        if (disposed) return;
+        if (!ensureInit()) return;
         if (dirty) uploadNow();
         if (texture.getId() == -1) {
             try {
@@ -367,9 +451,38 @@ public class CanvasSurface extends UIElement {
         GuiGraphics g = ctx.graphics;
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
-        g.blit(textureId, x, y, w, h, 0.0F, 0.0F, width, height, width, height);
-        renderTextsAt(ctx, x, y);
-        renderExtraAt(ctx, x, y);
+        final float scale2 = Math.min(w / (float) width, h / (float) height);
+        final int dw2 = Math.max(1, Math.round(width * scale2));
+        final int dh2 = Math.max(1, Math.round(height * scale2));
+        renderOffX = (w - dw2) / 2;
+        renderOffY = (h - dh2) / 2;
+        final int dx2 = x + renderOffX;
+        final int dy2 = y + renderOffY;
+        renderScaleX = scale2;
+        renderScaleY = scale2;
+        g.blit(textureId, dx2, dy2, dw2, dh2, 0.0F, 0.0F, width, height, width, height);
+        ctx.enableScissor(dx2, dy2, dx2 + dw2, dy2 + dh2);   // 同上：EDA 层裁剪
+        renderExtraAt(ctx, dx2, dy2);
+        renderTextsAt(ctx, dx2, dy2);
+        ctx.disableScissor();
+    }
+
+    /** 画面在元素内的居中偏移（缓冲坐标原点落在这里）：子类做鼠标命中换算时用。 */
+    protected int renderOffX() {
+        return renderOffX;
+    }
+
+    protected int renderOffY() {
+        return renderOffY;
+    }
+
+    /** 显示缩放（缓冲 → 屏幕）：子类画物品图标等叠加层时乘上它。 */
+    protected float scaleX() {
+        return renderScaleX;
+    }
+
+    protected float scaleY() {
+        return renderScaleY;
     }
 
     /** 文字叠加层:按画布原点 (ox,oy) 平移后批量绘制 */
@@ -378,13 +491,16 @@ public class CanvasSurface extends UIElement {
         Minecraft mc = Minecraft.getInstance();
         MultiBufferSource.BufferSource bs = mc.renderBuffers().bufferSource();
         Matrix4f base = new Matrix4f(ctx.graphics.pose().last().pose());
-        base.translate(ox, oy, 0);
+        // ⚠ z 必须是正数且**大于物品图标的 z**（MC 的 GuiGraphics.renderItem 内部把物品抬到 z≈150）：
+        //   画布文字/叠加层若留在 z=0，无论先后调用，物品都会靠深度把它盖住（2026-09-29 用户实测多轮）。
+        base.translate(ox, oy, 200.0F);
+        base.scale(renderScaleX, renderScaleY, 1.0F);   // 文字坐标是缓冲坐标 ⇒ 跟着画布缩放
         for (TextEntry e : texts) {
             Matrix4f m = e.scale == 1.0F ? base
                     : new Matrix4f(base).translate(e.x, e.y, 0).scale(e.scale, e.scale, 1.0F)
                             .translate(-e.x, -e.y, 0);
-            mc.font.drawInBatch(e.text, e.x, e.y, e.color, false, m, bs,
-                    Font.DisplayMode.NORMAL, 0, 0xF000F0);
+            mc.font.drawInBatch(e.text, e.x, e.y, e.color, true, m, bs,
+                    Font.DisplayMode.NORMAL, 0, 0xF000F0);   // dropShadow：深色底上小字更清楚
         }
         bs.endBatch();
     }
@@ -397,6 +513,9 @@ public class CanvasSurface extends UIElement {
     public void dispose() {
         if (disposed) return;
         disposed = true;
+        if (textureId == null) {
+            return;                 // 服务端从未初始化过资源（惰性创建）：没有要释放的纹理
+        }
         try {
             Minecraft.getInstance().getTextureManager().release(textureId);
         } catch (Throwable ignored) {

@@ -13,6 +13,8 @@ import java.util.List;
  *   <li>{@link AssemblerRecord} —— 网络组装器表（64 位 id + 组合顺序，可再组合）</li>
  *   <li>{@link WireRecord}      —— 网络导线表（双端点键 + 电气/渲染参数）</li>
  *   <li>{@link RendererRecord}  —— 渲染器表（材质/颜色/悬垂率等渲染参数）</li>
+ *   <li>{@link NetworkCacheRecord} —— 网络求解缓存表（签名 + 结构快照 + ctx 映射，跨区块恢复）</li>
+ *   <li>{@link DeviceInfoRecord} —— 设备信息表（dim + 坐标主键 + 组装器提供的 KV 二进制）</li>
  *   <li>{@link NetlistSnapshot} —— 全库快照（一次保存/恢复整库用）</li>
  * </ul>
  * 数量字段（x/y/z、terminalCount 等）用 int；64 位 id（网络/组装器/导线）用 long。
@@ -116,6 +118,26 @@ public final class NetlistRecord {
             this(signature, networkId, seedKey, frequency, nodeCount, mode,
                     voltages, complex, null, null, updatedAt);
         }
+    }
+
+    /**
+     * 设备信息记录（2026-09-15 用户："BE 侧走 Sqlite 保存即可，接管 NBT 保存，保存组装器
+     * 等信息"）。
+     * <p>
+     * 一个方块实体 = 一行：`dim + (x,y,z)` 主键，`info` 是该设备组装器提供的 KV 二进制
+     * （`NetworkStructureCodec.writeKv`：K=String，V=通用变量）。
+     * <p>
+     * 为什么走 SQLite 而不是 BE 的 NBT：Cryptand 自管的运行时状态（温度、电机转速/应力、
+     * 组装器信息）不属于原版方块的"配置"，塞进 NBT 会把存档格式和原版 BE 耦合死；
+     * 独立成表后，设备信息与网络结构缓存同库同生命周期（世界保存一起落盘、加载一起读回）。
+     */
+    public record DeviceInfoRecord(
+            String dim,          // 维度 id（主键之一；跨维度同坐标不冲突）
+            int x, int y, int z, // 方块坐标（主键）
+            String deviceClass,  // 设备类名（原版全限定名；按它找组装器）
+            byte[] info,         // 组装器提供的 KV 二进制（可 null = 无信息）
+            long updatedAt       // 更新时间戳
+    ) {
     }
 
     /** 全库快照：一次保存/恢复整库（网络 + 组装器 + 导线 + 渲染器）。 */

@@ -1,0 +1,206 @@
+use crate::scene::ChunkAccess;
+use crate::{
+    algo::{DEFAULT_COLLISION_PARALLEL_CUTOFF, find_collision_pairs},
+    scene::PhysicsScene,
+};
+use crate::prec::Real;
+use rapier3d::dynamics::RigidBody;
+use rapier3d::geometry::Aabb;
+use crate::{IVec3};
+use crate::DVec3;
+use rapier3d::math::Vec3;
+use rapier3d::prelude::RigidBodyVelocity;
+
+/// Computes buoyancy
+pub fn compute_buoyancy(scene: &PhysicsScene) {
+    let physics_state = crate::get_physics_state();
+    let collider_map = &physics_state.voxel_collider_map;
+    let sable_data = scene.sable_data.read().unwrap();
+    let mut sim_data = scene.sim_data.write().unwrap();
+
+    for (id, body_handle) in sable_data.rigid_bodies.iter() {
+        let info = sable_data.level_colliders.get(id);
+
+        if info.is_none() {
+            continue;
+        }
+        let info = info.unwrap();
+        let Some(body) = sim_data.rigid_body_set.get_mut(*body_handle) else {
+            panic!("No body with given handle!");
+        };
+
+        // ★ 2026-09-06 陪体/固定体不参与浮力/力重置（fixed 不积分；无 com/bounds 也安全）。
+        if !body.is_dynamic() {
+            continue;
+        }
+        // ★ 2026-09-06 防御：body 尚未 setCenterOfMass/setLocalBounds（创建后/重建中 →
+        //   removeSubLevel+createSubLevel 空窗）→ 跳过浮力（不 panic；随后的 step 正常）。
+        let Some(center_of_mass) = info.center_of_mass else {
+            continue;
+        };
+        let Some(local_bounds_min) = info.local_bounds_min else {
+            continue;
+        };
+        let Some(local_bounds_max) = info.local_bounds_max else {
+            continue;
+        };
+        body.reset_forces(false);
+        body.reset_torques(false);
+        let pairs = find_collision_pairs(
+            info,
+            None,
+            body.position(),
+            0.0,
+            DEFAULT_COLLISION_PARALLEL_CUTOFF,
+            true,
+            &sable_data,
+        );
+        let vels: RigidBodyVelocity<Real> = *body.vels();
+
+        let complex = (local_bounds_max - local_bounds_min).element_sum() < 10;
+        for (static_pos, dynamic_pos) in pairs.iter() {
+            let local_pos = Vec3::new(
+                dynamic_pos.x as Real + 0.5 - center_of_mass.x,
+                dynamic_pos.y as Real + 0.5 - center_of_mass.y,
+                dynamic_pos.z as Real + 0.5 - center_of_mass.z,
+            );
+
+            if complex {
+                for i in 0..8 {
+                    let x = (i & 1) * 2 - 1;
+                    let y = ((i >> 1) & 1) * 2 - 1;
+                    let z = ((i >> 2) & 1) * 2 - 1;
+                    let local_pos = Vec3::new(
+                        local_pos.x + x as Real * 0.25,
+                        local_pos.y + y as Real * 0.25,
+                        local_pos.z + z as Real * 0.25,
+                    );
+                    do_drag(body, &vels, static_pos, &local_pos, 0.25, 1.0);
+                }
+            } else {
+                do_drag(body, &vels, static_pos, &local_pos, 0.5, 1.0);
+            }
+        }
+        for (static_pos, dynamic_pos) in pairs.iter() {
+            let chunk =
+                sable_data.get_chunk(
+                    (dynamic_pos.x >> 4) as i32,
+                    (dynamic_pos.y >> 4) as i32,
+                    (dynamic_pos.z >> 4) as i32,
+                );
+
+            if chunk.is_none() {
+                continue;
+            }
+
+            let (block_id, _voxel_collider_state) = chunk.unwrap().get_block(
+                (dynamic_pos.x & 15) as i32,
+                (dynamic_pos.y & 15) as i32,
+                (dynamic_pos.z & 15) as i32,
+            );
+
+            // block id's are unsigned, and offset by 1 to allow for a single "empty" at 0
+            if block_id == 0 {
+                continue;
+            }
+
+            let voxel_collider_data =
+                &collider_map.get((block_id - 1) as usize, dynamic_pos.clone());
+
+            let Some(voxel_collider_data) = &voxel_collider_data else {
+                continue;
+            };
+
+            let local_pos = DVec3::new(
+                dynamic_pos.x as Real + 0.5,
+                dynamic_pos.y as Real + 0.5,
+                dynamic_pos.z as Real + 0.5,
+            );
+            let local_pos = Vec3::new(
+                (local_pos.x - center_of_mass.x) as Real,
+                (local_pos.y - center_of_mass.y) as Real,
+                (local_pos.z - center_of_mass.z) as Real,
+            );
+            let complex = (local_bounds_max - local_bounds_min).element_sum() < 10;
+            if complex {
+                for i in 0..8 {
+                    let x = (i & 1) * 2 - 1;
+                    let y = ((i >> 1) & 1) * 2 - 1;
+                    let z = ((i >> 2) & 1) * 2 - 1;
+                    let local_pos = Vec3::new(
+                        local_pos.x + x as Real * 0.25,
+                        local_pos.y + y as Real * 0.25,
+                        local_pos.z + z as Real * 0.25,
+                    );
+                    do_float(
+                        body,
+                        static_pos,
+                        &local_pos,
+                        0.25,
+                        crate::prec::to_r(voxel_collider_data.volume),
+                    );
+                }
+            } else {
+                do_float(
+                    body,
+                    static_pos,
+                    &local_pos,
+                    0.5,
+                    crate::prec::to_r(voxel_collider_data.volume),
+                );
+            }
+        }
+    }
+}
+
+fn do_drag(
+    body: &mut RigidBody,
+    vels: &RigidBodyVelocity<Real>,
+    static_pos: &IVec3,
+    point: &Vec3,
+    size: Real,
+    strength: Real,
+) {
+    let point = body.position().transform_point(*point);
+
+    let overlap = Aabb::new(point - size, point + size)
+        .intersection(&Aabb::new(
+            crate::prec::to_vec3(static_pos.as_dvec3()),
+            crate::prec::to_vec3(static_pos.as_dvec3()) + 1.0,
+        ));
+
+    if overlap.is_none() {
+        return;
+    }
+
+    let volume = overlap.unwrap().volume();
+    let velo = vels.velocity_at_point(point, body.mass_properties().world_com);
+
+    body.add_force_at_point(-velo * 1.7 * volume * strength, point, false);
+}
+
+fn do_float(body: &mut RigidBody, static_pos: &IVec3, point: &Vec3, size: Real, strength: Real) {
+    let point = body.position().transform_point(*point);
+
+    let overlap =
+        Aabb::new(point - Vec3::splat(size), point + Vec3::splat(size)).intersection(&Aabb::new(
+            Vec3::new(
+                static_pos.x as Real,
+                static_pos.y as Real,
+                static_pos.z as Real,
+            ),
+            Vec3::new(
+                static_pos.x as Real + 1.0,
+                static_pos.y as Real + 1.0,
+                static_pos.z as Real + 1.0,
+            ),
+        ));
+
+    if overlap.is_none() {
+        return;
+    }
+
+    let volume = overlap.unwrap().volume();
+
+    body.add_force_at_point(Vec3::new(0.0, 10.5 * volume * strength, 0.0), point, false);
+}

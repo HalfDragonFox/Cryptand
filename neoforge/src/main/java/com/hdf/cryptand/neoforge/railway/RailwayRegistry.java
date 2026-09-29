@@ -1,6 +1,7 @@
 package com.hdf.cryptand.neoforge.railway;
 
 import com.hdf.cryptand.Cryptand;
+import com.hdf.cryptand.neoforge.cee.config.ConfigCee;
 import com.hdf.cryptand.neoforge.railway.catenary.CatenaryHolderBlock;
 import com.hdf.cryptand.neoforge.railway.catenary.CatenaryHolderBlockEntity;
 import com.hdf.cryptand.neoforge.railway.pantograph.PantographBlock;
@@ -45,9 +46,13 @@ public final class RailwayRegistry {
     /** 内容是否应注册（CEE 支持配置；构造期配置未加载/异常 → 默认 true=启用）。 */
     public static boolean shouldRegister() {
         try {
-            return com.hdf.cryptand.neoforge.core.config.ConfigLoad.ENABLE_CEE_SUPPORT.get();
+            // ⚠ 构造期 spec 未加载 → 预读配置文件（铁路电气化随 CEE 支持开关）
+            return ConfigCee.SPEC.isLoaded()
+                    ? ConfigCee.ENABLE_CEE_SUPPORT.get()
+                    : com.hdf.cryptand.neoforge.core.config.ConfigLoad
+                            .preloadBoolean("cee", "enableCeeSupport", true);
         } catch (Throwable ignored) {
-            return true; // 配置未就绪 → 默认启用（与 define 默认一致）
+            return true;
         }
     }
 

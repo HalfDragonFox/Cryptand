@@ -36,6 +36,15 @@ public class IdealTransformer implements Element {
     public static final double GMIN = 1e-9;
 
     public IdealTransformer(int a1, int a2, int b1, int b2, int k, double ratio) {
+        // ⚠ 2026-08-30 审计 U7 根因：匝比 0/负/非有限 → stamp 里 1.0/ratio =
+        // Infinity 注入 MNA 约束行 → 矩阵 NaN/奇异 → 仿真中断。这是非法输入，
+        // 构造时【拒绝】（fail-fast）——不用 clamp（clamp 会静默掩盖错误数据，
+        // 让异常网络"看起来正常"）。装配层（PhasorNetworkBuilder）已保证
+        // ratio≥1，此处防护序列化恢复/第三方调用方。
+        if (!Double.isFinite(ratio) || Math.abs(ratio) < 1e-12) {
+            throw new IllegalArgumentException(
+                    "ideal transformer ratio must be finite and non-zero: " + ratio);
+        }
         this.a1 = a1;
         this.a2 = a2;
         this.b1 = b1;

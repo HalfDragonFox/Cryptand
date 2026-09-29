@@ -1,0 +1,9 @@
+{
+	"credit": "Made with Blockbench",
+	"parent": "cryptand:block/peripheral_transmission_key/block",
+	"textures": {
+		"0": "cryptand:block/peripheral_transmission_key/block_inside_on",
+		"1": "cryptand:block/peripheral_transmission_key/block_on",
+		"particle": "create:block/brass_casing"
+	}
+}

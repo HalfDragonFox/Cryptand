@@ -1,0 +1,8 @@
+{
+    "parent": "block/cube_bottom_top",
+    "textures": {
+        "bottom": "cryptand:block/generic_top",
+        "top": "cryptand:block/generic_top",
+        "side": "cryptand:block/generic_side"
+    }
+}

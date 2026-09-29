@@ -34,6 +34,14 @@ public final class AsyncTransportManager {
     /** 传输操作类自身在分配器上的任务模式（默认普通=虚拟线程） */
     private final TaskMode dispatchMode;
 
+    /** 关闭标志（2026-09 P2-7 根因修复：优雅关闭——置位后拒绝新消息、
+     *  不再继续投递缓冲，在途操作自然完成后清空） */
+    private volatile boolean closing = false;
+    /** 在途传输操作计数（dispatch 前 +1；最终从记录表移除时 -1）。
+     *  供 {@link #awaitIdle} 等待全部在途操作结束（世界卸载不再有孤儿任务）。 */
+    private final java.util.concurrent.atomic.AtomicInteger inFlight =
+            new java.util.concurrent.atomic.AtomicInteger();
+
     public AsyncTransportManager(ThreadDispatcher dispatcher, TransportExecutor executor) {
         this(dispatcher, executor, TaskMode.NORMAL);
     }
@@ -60,6 +68,7 @@ public final class AsyncTransportManager {
      */
     public void submit(Object key, TransportOpRequest request) {
         if (key == null || request == null) return;
+        if (closing) return; // 关闭中：拒绝新消息（世界已卸载）
         while (true) {
             TransportOperation op = records.computeIfAbsent(key,
                     k -> new TransportOperation(k, this, executor));
@@ -69,6 +78,7 @@ public final class AsyncTransportManager {
                 if (op.running) return;   // 已有操作类在执行 → 消息已入缓冲，等完成
                 op.running = true;
             }
+            inFlight.incrementAndGet();   // 本次投递为一个在途单元
             dispatch(op);
             return;
         }
@@ -82,12 +92,15 @@ public final class AsyncTransportManager {
      */
     void onComplete(TransportOperation op) {
         synchronized (op) {
-            if (!op.buffer.isEmpty()) {
+            // 关闭中：不再继续投递缓冲（剩余消息随世界作废），直接结束该在途单元。
+            if (!closing && !op.buffer.isEmpty()) {
                 dispatch(op);
                 return;
             }
             op.running = false;
-            records.remove(op.key, op);
+            if (records.remove(op.key, op)) {
+                inFlight.decrementAndGet();
+            }
         }
     }
 
@@ -106,6 +119,39 @@ public final class AsyncTransportManager {
         } else {
             dispatcher.submitGeneric(op);
         }
+    }
+
+    /**
+     * 优雅关闭（2026-09 P2-7 根因修复）：置关闭标志——拒绝新消息、不再继续
+     * 投递缓冲；在途操作自然完成后由 {@link #awaitIdle} 感知。
+     */
+    public void shutdown() {
+        closing = true;
+    }
+
+    /** 是否已关闭（在途操作据此停止消费缓冲） */
+    public boolean isClosing() {
+        return closing;
+    }
+
+    /** 等待全部在途传输操作结束（带超时）。返回是否在超时内结束。 */
+    public boolean awaitIdle(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(0, timeoutMs);
+        while (inFlight.get() > 0) {
+            if (System.currentTimeMillis() >= deadline) return false;
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return inFlight.get() == 0;
+            }
+        }
+        return true;
+    }
+
+    /** 当前在途传输操作数（诊断） */
+    public int inFlightCount() {
+        return inFlight.get();
     }
 
     /** 记录表大小（诊断：当前被占用/锁定的传输网数） */

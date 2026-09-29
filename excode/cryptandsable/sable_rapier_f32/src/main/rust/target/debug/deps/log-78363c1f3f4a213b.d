@@ -1,0 +1,8 @@
+E:\Projects\MCMDK\Cryptand\excode\sable_rapier_f32\src\main\rust\target\debug\deps\log-78363c1f3f4a213b.d: E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\lib.rs E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\macros.rs E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\serde.rs E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\__private_api.rs
+
+E:\Projects\MCMDK\Cryptand\excode\sable_rapier_f32\src\main\rust\target\debug\deps\liblog-78363c1f3f4a213b.rmeta: E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\lib.rs E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\macros.rs E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\serde.rs E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\__private_api.rs
+
+E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\lib.rs:
+E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\macros.rs:
+E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\serde.rs:
+E:\Projects\MCMDK\Cryptand\.ai_cache\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\log-0.4.29\src\__private_api.rs:

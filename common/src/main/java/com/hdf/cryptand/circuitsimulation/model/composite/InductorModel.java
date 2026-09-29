@@ -46,11 +46,18 @@ public class InductorModel extends CompositeModel implements EnergyDevice, Therm
         this.dcr = r;
     }
 
-    /** 组合：a --Resistor(DCR)-- x --Inductor-- b（DCR>0 才有电阻） */
+    /** 组合：a --Resistor(DCR)-- x --Inductor-- b（DCR≤0 → 直连 a-b） */
     private static Element[] build(int a, int b, int x, double l, double dcr) {
         java.util.List<Element> els = new java.util.ArrayList<>();
-        if (dcr > 0) els.add(new Resistor(a, x, dcr));
-        els.add(new Inductor(x, b, l));
+        // ⚠ 2026-08-30 审计 M9 根因：dcr≤0 时直接 a-b 直连储能元件（x 弃用）——
+        // 否则 a 与 x 之间无元件 → a 端口悬空（仅 GMin）→ 电感实际未接入电路。
+        // 与 MotorModel.build 的 L=0 处理（直接 a-b）一致。
+        if (dcr > 0) {
+            els.add(new Resistor(a, x, dcr));
+            els.add(new Inductor(x, b, l));
+        } else {
+            els.add(new Inductor(a, b, l));
+        }
         return els.toArray(new Element[0]);
     }
 

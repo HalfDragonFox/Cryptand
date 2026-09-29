@@ -22,8 +22,42 @@ import com.hdf.cryptand.circuitsimulation.model.elements.WaveformSource;
  */
 public final class Solvers {
 
-    /** 是否启用 float 求解器（由配置写入；默认 true = float 优先） */
-    public static volatile boolean floatEnabled = true;
+    /** 是否启用 float 求解器（由 {@link #setBackend(String)} 写入；默认 false = double） */
+    public static volatile boolean floatEnabled = false;
+
+    /**
+     * 当前求解后端名称（2026-09-11 用户：配置直接写 float / double，便于以后扩展其他类型）。
+     * <p>扩展点：新增后端（如 native-f32、混合精度）时，在 {@link #setBackend(String)} 加分支，
+     * 并在 {@link #create(SolveMode, Network)} 中按 {@code backend} 选择对应 Solver 实现即可。
+     */
+    public static volatile String backend = "double";
+
+    /**
+     * 设置求解后端（配置值直接写名称）。
+     *
+     * @param name "double"（默认）/ "float" / 未来扩展类型
+     * @return true = 识别成功；false = 未知名称 → 已回落 double
+     */
+    public static boolean setBackend(String name) {
+        String n = name == null ? "" : name.trim().toLowerCase(java.util.Locale.ROOT);
+        switch (n) {
+            case "float" -> {
+                backend = "float";
+                floatEnabled = true;
+                return true;
+            }
+            case "double" -> {
+                backend = "double";
+                floatEnabled = false;
+                return true;
+            }
+            default -> {
+                backend = "double";
+                floatEnabled = false;
+                return false;
+            }
+        }
+    }
 
     private Solvers() {
     }
@@ -85,7 +119,17 @@ public final class Solvers {
                 // ⚠ 2026-08-21 电容也剔除：电容两端经【自身内部】连通（ESR+Cap）
                 //   ——若不剔除，孤立电容两端会被误判连通 → 永不 openCircuit →
                 //   剪线后 Backward Euler I_hist 注入 GMin → 假电流 → 发热爆炸
-                if (e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Capacitor) continue;
+                // ⚠ 2026-08-30 审计 U5：仅 DC/低频（ω<1）剔除——AC 下电容
+                //   Y=jωC 是正常通路，应加入连通图，否则「源 a--C--w--R--b」
+                //   串联电容电路源两端被误判不连通 → openCircuit=true → 源不
+                //   注入 → 负载无电流（AC 隔直耦合/电容启动/LC 注入场景）。
+                //   AC 下孤立电容有 stampComplex 的 openCircuit 检查兜底
+                //   （隔离时不注入），无假电流风险。
+                if (e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Capacitor) {
+                    double omegaNet = 2 * Math.PI * Math.max(net.frequency, 0);
+                    if (omegaNet < 1.0) continue; // DC/低频：仍剔除（防孤立假电流）
+                    // AC：电容作为通路加入 adj（走下方通用 addAdj）
+                }
                 if (e instanceof IdealTransformer it) {
                     // 原边/副边绕组各自连通（电流源接任一侧都不判开路）
                     if (it.a1 != it.a2) addAdj(adj, it.a1, it.a2);
@@ -146,6 +190,17 @@ public final class Solvers {
                         System.out.println("[OpenSrc] " + e.type() + " nodes=" + a
                                 + "-" + b + " openCircuit=true (开路防假电流)");
                     }
+                }
+            }
+            // ⚠ 2026-08-30 审计 U6：孤立/剪线电感标记（与电容/源一致）——电感
+            // 此前无 openCircuit 保护，剪线后孤立电感仍 stamp 并注入 iPrev →
+            // 悬空端仅 GMin 兜底 → v≈iPrev/GMin（1e8V 级发散）。标记后 stamp
+            // 不注入 iPrev、不 commit（电机绕组电感在闭合回路中 connectedIn=true
+            // → 不受影响）。
+            for (Element e : net.elements()) {
+                if (e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Inductor ind) {
+                    int a = ind.nodeA(), b = ind.nodeB();
+                    ind.setOpenCircuit(a == b || !connectedIn(adj, a, b));
                 }
             }
             // 孤立电容标记（2026-08-21 剪线不爆炸）：两端无闭合回路 → openCircuit

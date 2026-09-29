@@ -35,6 +35,12 @@ public class ThermalModel extends DynamicsModel {
     /** 风扇冷却倍率（>1 = 被鼓风机吹，提高散热系数） */
     private double coolingMultiplier = 1.0;
 
+    /** 外部附加散热（倍率贡献 k，可叠加；2026-09-12 用户设计：风扇按台累加、
+     *  风扇被破坏时只减掉该风扇那一份 → 多台风扇线性叠加互不干扰）。
+     *  G_eff = conductance × (coolingMultiplier + extraCoolingFactor)。
+     *  volatile：主线程写（FanCoolingRegistry 应用），后台线程读（温度推进）。 */
+    private volatile double extraCoolingFactor = 0.0;
+
     /** 温度计算节流（2026-08-21 用户要求可配置：每计算 N 次才推进一次温度）。
      *  neoforge ConfigLoad 启动时写入；1 = 每次计算都推进。
      *  节流时用【累积 dt + 最近功率】推进 → 温度速率不变，仅更新频率降低。 */
@@ -66,8 +72,10 @@ public class ThermalModel extends DynamicsModel {
         this(conductance, heatCapacity, 293.15, 473.15);
     }
 
-    /** 有效散热系数（W/K）＝基础散热值 × 风扇冷却倍率 */
-    public double effectiveConductance() { return conductance * coolingMultiplier; }
+    /** 有效散热系数（W/K）＝基础散热值 ×（风扇冷却倍率 + 外部附加散热贡献） */
+    public double effectiveConductance() {
+        return conductance * (coolingMultiplier + extraCoolingFactor);
+    }
 
     /** 设置风扇冷却倍率（>1 = 被鼓风机吹，提高最终散热系数） */
     public void setCoolingMultiplier(double m) {
@@ -77,6 +85,30 @@ public class ThermalModel extends DynamicsModel {
     }
 
     public double getCoolingMultiplier() { return coolingMultiplier; }
+
+    /**
+     * 设置【外部附加散热】贡献 k（0 = 无附加；风扇冷却用）。
+     *
+     * <p>与 {@link #setCoolingMultiplier} 的区别：倍率是"整体替换"（同一时刻只能有一个
+     * 值），本值是"叠加量"——调用方（FanCoolingRegistry）把若干台风扇的贡献累加后
+     * 一次性写入，风扇被破坏时减掉自己那份再写回，因此多风扇天然可叠加、可精确撤销。
+     *
+     * <p>只改 volatile 字段 + 重算时间常数；温度推进（后台线程）下一轮即生效，
+     * 不需要重建温度模型（温度与热惯性全程保留）。
+     */
+    public void setExtraCoolingFactor(double k) {
+        double nk = Math.max(0.0, k);
+        if (nk == extraCoolingFactor) return;
+        this.extraCoolingFactor = nk;
+        // 附加散热改变 → 时间常数 τ = C/G_eff 随之变（父类重设）
+        this.setTimeConstant(heatCapacity / effectiveConductance());
+    }
+
+    /** 当前外部附加散热贡献 k（0 = 无） */
+    public double extraCoolingFactor() { return extraCoolingFactor; }
+
+    /** 外部附加散热的物理量（W/K）= conductance × k（日志/诊断用） */
+    public double extraConductanceWPerK() { return conductance * extraCoolingFactor; }
 
     /** 当前温度（K） */
     public double getTemperature() { return value(); }
@@ -106,6 +138,12 @@ public class ThermalModel extends DynamicsModel {
             return linearStep(lastPower, d);
         }
         return linearStep(power, dt);
+    }
+
+    /** ⚠ 2026-08-30 固定步长推进（引擎仿真时间——导线组/模型每轮固定 dt；
+     *  真实时间 realDt 在快轮次（毫秒）下升温极慢——固定 0.05s/轮累积正确）。 */
+    public double advanceStep(double power, double dt) {
+        return linearStep(power, dt > 0 ? dt : 0.05);
     }
 
     /** 按真实时间推进（内部记录上次调用时间戳）；同为线性累加。 */

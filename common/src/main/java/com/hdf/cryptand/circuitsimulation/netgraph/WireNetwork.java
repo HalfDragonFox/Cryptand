@@ -75,20 +75,26 @@ public final class WireNetwork {
 
     public Set<WirePoint> points() {
         lock.readLock().lock();
-        try { return Collections.unmodifiableSet(adjacency.keySet()); } finally { lock.readLock().unlock(); }
+        // ⚠ 2026-08-30 审计 U14 根因：返回【副本】而非不可变视图——视图在
+        // 读锁释放后仍指向底层集合，调用方锁外迭代时写线程 addEdge/merge/
+        // removeNode 修改底层 → ConcurrentModificationException/撕裂数据。
+        // 与 NetworkGraphStore.edgeList() 的既有正确做法一致。
+        try { return new LinkedHashSet<>(adjacency.keySet()); } finally { lock.readLock().unlock(); }
     }
 
     public Set<WireEdge> edges() {
         lock.readLock().lock();
-        try { return Collections.unmodifiableSet(edges); } finally { lock.readLock().unlock(); }
+        try { return new LinkedHashSet<>(edges); } finally { lock.readLock().unlock(); }
     }
 
-    /** 某节点的邻接边（不可变视图；节点不存在返回空集） */
+    /** 某节点的邻接边（副本；节点不存在返回空集）——⚠ 2026-08-30 审计 U14：
+     *  返回副本而非不可变视图（读锁释放后视图指向底层集合，锁外迭代与写线程
+     *  修改竞态）。 */
     public Set<WireEdge> adjacent(WirePoint p) {
         lock.readLock().lock();
         try {
             Set<WireEdge> s = adjacency.get(p);
-            return s == null ? Collections.emptySet() : Collections.unmodifiableSet(s);
+            return s == null ? Collections.emptySet() : new LinkedHashSet<>(s);
         } finally { lock.readLock().unlock(); }
     }
 

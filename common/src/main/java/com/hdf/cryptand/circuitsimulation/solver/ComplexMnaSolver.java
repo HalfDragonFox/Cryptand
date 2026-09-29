@@ -69,8 +69,18 @@ public class ComplexMnaSolver implements Solver {
         // Backward Euler 伴随（G=C/simDt + I_hist）逐节拍充电（大电流→指数
         // 衰减→存电，现实充电曲线）。AC 网络电容用 Y=jωC（不用 vPrev），
         // commit 更新状态无副作用（下轮 AC 分支仍不用 vPrev）。
+        // ⚠ 2026-08-30 审计 M2：AC 网络（ω≥1）不 commit 电容/电感——其相量
+        // 解 v[a].re 是【相量实部】（非瞬时电压），写入 vPrev/iPrev 会污染充电
+        // 状态；若网络随后切到 DC/低频分支，起点被污染。AC 分支本就不读
+        // vPrev/iPrev（Y=jωC / 1/(jωL)），跳过完全正确。DC/低频（伪时域）照常
+        // commit（实部=瞬时电压）。
         try {
+            boolean dcMode = omega < 1.0;
             for (Element e : net.elements()) {
+                if (!dcMode && (e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Capacitor
+                        || e instanceof com.hdf.cryptand.circuitsimulation.model.elements.Inductor)) {
+                    continue;
+                }
                 int a = e.nodeA(), b = e.nodeB();
                 if (a >= 0 && a < n && b >= 0 && b < n) {
                     e.commit(v[a].re, v[b].re, Math.max(net.dt, 1e-3));

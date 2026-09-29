@@ -37,10 +37,26 @@ public final class CoreNetOpExecutor implements NetOpExecutor {
 
     private final NetworkRegistry registry;
     private final NetworkDecomposer decomposer;
+    /** ⚠ 2026-08-30 每实例时间基准（用户：核心实例连接 EDA/MC 各自独立时间）。
+     *  求解前设置 net.dt = timeBase.advance()（真实流逝或仿真固定步长）。 */
+    private final com.hdf.cryptand.circuitsimulation.solver.TimeBase timeBase;
 
     public CoreNetOpExecutor(NetworkRegistry registry) {
+        this(registry, new com.hdf.cryptand.circuitsimulation.solver.SimClock());
+    }
+
+    /** 每实例时间基准构造（EDA 传 SimulatedTimeBase，MC 传共享 SimClock） */
+    public CoreNetOpExecutor(NetworkRegistry registry,
+                             com.hdf.cryptand.circuitsimulation.solver.TimeBase timeBase) {
         this.registry = registry;
+        this.timeBase = timeBase == null
+                ? new com.hdf.cryptand.circuitsimulation.solver.SimClock() : timeBase;
         this.decomposer = new NetworkDecomposer();
+    }
+
+    /** 当前时间基准（诊断/扩展） */
+    public com.hdf.cryptand.circuitsimulation.solver.TimeBase timeBase() {
+        return timeBase;
     }
 
     /** 内部节点化流水线（可调阈值：parallelThreshold / asyncEnabled）。 */
@@ -92,6 +108,21 @@ public final class CoreNetOpExecutor implements NetOpExecutor {
 
     @Override
     public void executeSolve(Object networkKey, Object data) {
+        // ⚠ 2026-08-30 引擎独立求解：注册为引擎网络上下文（工厂创建——图+组装器
+        // +绑定）→ NetworkSolver 完整求解（电路 + 分片组装器并行 + 绑定器
+        // SOLVE_DONE 消息）；纯图（无 ctx）→ 回退旧 solve 路径。
+        com.hdf.cryptand.engine.NetworkContext<?> ctx = registry.ctx(networkKey);
+        if (ctx != null && ctx.network != null) {
+            try {
+                ctx.network.dt = timeBase.advance(); // 每实例时间基准
+                SolveResult cr = com.hdf.cryptand.engine.NetworkSolver
+                        .solveNetwork(ctx);
+                if (cr != null) registry.setResult(networkKey, cr);
+                return;
+            } catch (Throwable ignored) {
+                // 引擎求解异常 → 回退旧路径（防御）
+            }
+        }
         Network net = registry.get(networkKey);
         if (net == null) return;
         SolveResult r = usePipeline ? solveViaPipeline(net) : solve(net);
@@ -106,6 +137,8 @@ public final class CoreNetOpExecutor implements NetOpExecutor {
      */
     public SolveResult solveViaPipeline(Network net) {
         if (net == null) return null;
+        // ⚠ 2026-08-30 每实例时间基准：求解前设置网络步长（真实流逝/仿真步进）
+        net.dt = timeBase.advance();
         decomposer.nonlinearMethod = nonlinearMethod;
         var pr = decomposer.run(net);
         return pr.primaryResult;
@@ -121,6 +154,8 @@ public final class CoreNetOpExecutor implements NetOpExecutor {
      */
     public SolveResult solve(Network net) {
         if (net == null) return null;
+        // ⚠ 2026-08-30 每实例时间基准：求解前设置网络步长（真实流逝/仿真步进）
+        net.dt = timeBase.advance();
         Solver solver;
         if (net.frequency <= 0) {
             // DC / 时域实数求解（独立内核语义：DC 源经诺顿注入电流）

@@ -34,6 +34,24 @@ public final class TerminalRecorder {
         double[] v = res.voltages;
         Complex[] c = res.complex;
         int n = v.length;
+        // ⚠ 2026-08-30 审计 #23：求解结果含 NaN/Infinity（native 求解器异常/
+        // 奇异矩阵静默产 NaN，round 路径 solveAll 只查 converged 不查有限性）
+        // → 端子读到 NaN 电压 → 消费端（风扇/电机/仪表）行为异常/永久不转。
+        // 根因：非法结果【不写入测试点】——全量校验一次，非法 → 全部端子
+        // invalidate（消费端 valid=false → 不动作）。
+        boolean finite = true;
+        for (int i = 0; i < n; i++) {
+            if (!Double.isFinite(v[i])) { finite = false; break; }
+            if (c != null && i < c.length && c[i] != null
+                    && (!Double.isFinite(c[i].re) || !Double.isFinite(c[i].im))) {
+                finite = false;
+                break;
+            }
+        }
+        if (!finite) {
+            for (TerminalElement t : net.terminals()) t.invalidate();
+            return;
+        }
         boolean multiTone = res.toneVoltages != null && !res.toneVoltages.isEmpty();
         double freq = net.dominantFrequency();
         for (TerminalElement t : net.terminals()) {

@@ -1,0 +1,327 @@
+NOTICE
+======
+
+Cryptand 的部分代码派生自第三方开源项目。以下列出派生关系、原始许可与逐文件清单。
+
+--------------------------------------------------------------------------------
+1. OpenComputers: Rebooted  (MIT License)
+--------------------------------------------------------------------------------
+
+本仓库的「真彩屏（TrueScreen）Scala 屏幕实现」派生自 OpenComputers: Rebooted
+1.9.4-2 的屏幕代码。上游为 MIT 许可，原始版权声明：
+
+    Copyright (c) 2013-2015 Florian "Sangar" Nücke
+    Copyright (c) 2026 akki697222
+    Copyright (c) 2026 OpenComputers: Rebooted Team
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
+
+来源：https://github.com/OpenComputers-Rebooted/OpenComputers （1.9.4-2）
+本仓库为**下游派生**：只在内部使用与修改，**不向上游提交任何 PR / patch / issue**。
+
+派生方式：保持上游的相对包结构，只替换根包名
+    li.cil.oc.*  →  com.hdf.cryptand.neoforge.truescreen.*
+并按 Cryptand 的注册方式（cryptand 命名空间）重新接入注册链；屏幕参数改为本仓库常量；
+渲染层（任务 B）同样派生自上游 client/**（见下），**只把"内容来源"从字符面换成我方真彩屏 VRAM**
+（common 的 TrueColorScreen；新增文件 client/renderer/vram/TrueScreenVram.scala 为我方原创，不属派生）；
+报文层（任务 C）派生自上游 common/PacketBuilder.scala、common/PacketType.scala、common/PacketPayload.scala、
+common/PacketHandler.scala、client/PacketSender.scala、client/PacketHandler.scala、server/PacketSender.scala、
+server/PacketHandler.scala 的**屏幕子集**（见下），通道 id 换成 cryptand:truescreen（不借道 OC 的通道，
+因为 OC 的报文处理器只认它自己的组件类）；GUI 窗口派生自上游 client/gui/Screen.scala，其 InputBuffer 那一层
+因依赖四个未移植子系统（GLFWTranslator / KeyBindings / Textures.GUISprites / ItemSearch）而按最小替代直连键鼠。
+每个派生文件头部保留其一行的派生声明（原文件路径 + 上述版权行）。
+
+### 逐文件清单（上游路径 → 本仓库路径）
+
+  src/main/scala/li/cil/oc/common/Tier.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/Tier.scala
+
+  src/main/scala/li/cil/oc/util/SideTracker.java  (逐字转写为 Scala object)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/SideTracker.scala
+
+  src/main/scala/li/cil/oc/util/PackedColor.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/PackedColor.scala
+
+  src/main/scala/li/cil/oc/util/TextBuffer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/TextBuffer.scala
+
+  src/main/scala/li/cil/oc/util/FontUtils.scala   (字形宽度表的 musl wcwidth 实现，见文件内许可原文)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/FontUtils.scala
+
+  src/main/scala/li/cil/oc/util/Color.scala       (仅 byTier / 色表部分)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/Color.scala
+
+  src/main/scala/li/cil/oc/util/RotationHelper.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/RotationHelper.scala
+
+  src/main/scala/li/cil/oc/util/ExtendedEnumFacing.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/ExtendedEnumFacing.scala
+
+  src/main/scala/li/cil/oc/util/BlockPosition.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/BlockPosition.scala
+
+  src/main/scala/li/cil/oc/util/ExtendedLevel.scala      (仅屏幕闭包用到的成员)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/ExtendedLevel.scala
+
+  src/main/scala/li/cil/oc/util/ExtendedDataComponentHolder.scala  (去掉 Migrator 迁移分支)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/ExtendedDataComponentHolder.scala
+
+  src/main/scala/li/cil/oc/util/ExtendedNBT.scala        (仅 setNewCompoundTag)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/ExtendedNBT.scala
+
+  src/main/scala/li/cil/oc/util/ResultWrapper.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/util/ResultWrapper.scala
+
+  src/main/scala/li/cil/oc/common/datacomponents/ScalaCodec.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/datacomponents/ScalaCodec.scala
+
+  src/main/scala/li/cil/oc/common/datacomponents/TextBufferContents.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/datacomponents/TextBufferContents.scala
+
+  src/main/scala/li/cil/oc/common/datacomponents/CompoundStorage.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/datacomponents/CompoundStorage.scala
+
+  src/main/scala/li/cil/oc/common/datacomponents/MaximumVideoMode.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/datacomponents/MaximumVideoMode.scala
+
+  src/main/scala/li/cil/oc/common/datacomponents/VideoMode.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/datacomponents/VideoMode.scala
+
+  src/main/scala/li/cil/oc/common/block/property/PropertyRotatable.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/property/PropertyRotatable.scala
+
+  src/main/scala/li/cil/oc/common/block/SimpleBlock.scala        (最小子集)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/SimpleBlock.scala
+
+  src/main/scala/li/cil/oc/common/block/RedstoneAware.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/RedstoneAware.scala
+
+  src/main/scala/li/cil/oc/common/block/Item.scala              (BlockItem：放置朝向)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/Item.scala
+
+  src/main/scala/li/cil/oc/common/block/Screen.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/Screen.scala
+
+  src/main/scala/li/cil/oc/common/block/FlatScreen.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/FlatScreen.scala
+
+  src/main/scala/li/cil/oc/common/block/traits/Tickable.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/block/traits/Tickable.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/Screen.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/Screen.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/BaseBlockEntity.scala   (去掉 Create 载具 / 外挂存档文件)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/BaseBlockEntity.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/Environment.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/Environment.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/RotationAware.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/RotationAware.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/Rotatable.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/Rotatable.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/RedstoneAware.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/RedstoneAware.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/Colored.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/Colored.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/Tickable.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/Tickable.scala
+
+  src/main/scala/li/cil/oc/common/blockentity/traits/TextBuffer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/blockentity/traits/TextBuffer.scala
+
+  src/main/scala/li/cil/oc/common/component/package.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/package.scala
+
+  src/main/scala/li/cil/oc/common/component/TextBuffer.scala     (渲染 / 报文调用点留空 + TODO)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/TextBuffer.scala
+
+  src/main/scala/li/cil/oc/common/component/Screen.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/Screen.scala
+
+  src/main/scala/li/cil/oc/common/component/GpuTextBuffer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/GpuTextBuffer.scala
+
+  src/main/scala/li/cil/oc/common/component/traits/TextBufferProxy.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/traits/TextBufferProxy.scala
+
+  src/main/scala/li/cil/oc/common/component/traits/VideoRamDevice.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/traits/VideoRamDevice.scala
+
+  src/main/scala/li/cil/oc/common/component/traits/VideoRamRasterizer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/traits/VideoRamRasterizer.scala
+
+  src/main/scala/li/cil/oc/integration/opencomputers/DriverScreen.scala   (重写为我方版本，见文件内说明)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/integration/opencomputers/DriverScreen.scala
+
+  ── 渲染层（任务 B，client/**） ──
+
+  src/main/scala/li/cil/oc/client/Textures.scala          (仅屏幕渲染子集；命名空间 → cryptand)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/TrueScreenTextures.scala
+
+  src/main/scala/li/cil/oc/client/renderer/RenderTypes.java (屏幕子集；新增 createScreenTex，字段照抄 FONT_QUAD)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/RenderTypes.java
+
+  src/main/scala/li/cil/oc/util/RenderState.scala          (仅 checkError / mirrorScale；因任务 B 领地限定而搬到 client/renderer)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/RenderState.scala
+
+  src/main/scala/li/cil/oc/client/renderer/TextBufferRenderCache.scala   (内容来源换成 TrueScreenVram)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/TrueScreenRenderCache.scala
+
+  src/main/scala/li/cil/oc/client/renderer/font/TextBufferRenderData.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/font/TextBufferRenderData.scala
+
+  src/main/scala/li/cil/oc/client/renderer/font/TextureFontRenderer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/font/TextureFontRenderer.scala
+
+  src/main/scala/li/cil/oc/client/renderer/font/StaticFontRenderer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/font/StaticFontRenderer.scala
+
+  src/main/scala/li/cil/oc/client/renderer/block/SmartBlockModelBase.scala (ItemTransform 4 参 → 3 参，见文件内 javap 依据)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/block/SmartBlockModelBase.scala
+
+  src/main/scala/li/cil/oc/client/renderer/block/ScreenModel.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/block/ScreenModel.scala
+
+  src/main/scala/li/cil/oc/client/renderer/block/ModelInitialization.scala (仅屏幕方块接管那一条)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/block/TrueScreenModelInitialization.scala
+
+  src/main/scala/li/cil/oc/client/renderer/tileentity/ScreenRenderer.scala (裁 HoloScreen 段；无 Sable 时 SableCompat 等价内联)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/tileentity/ScreenRenderer.scala
+
+  src/main/scala/li/cil/oc/client/renderer/gui/BufferRenderer.scala
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/renderer/gui/BufferRenderer.scala
+
+  ── 渲染器直接输入的贴图（命名空间 opencomputers → cryptand，字节不变） ──
+
+  assets/opencomputers/textures/block/screen/*.png                 (48 张：首/中/尾三级分段)
+    → neoforge/src/main/resources/assets/cryptand/textures/block/screen/*.png
+  assets/opencomputers/textures/block/generic_top.png
+    → neoforge/src/main/resources/assets/cryptand/textures/block/generic_top.png
+  assets/opencomputers/textures/block/overlay/screen_up_indicator.png
+    → neoforge/src/main/resources/assets/cryptand/textures/block/overlay/screen_up_indicator.png
+  assets/opencomputers/textures/font/chars.png / chars_aliased.png / chars.txt
+    → neoforge/src/main/resources/assets/cryptand/textures/font/chars.png / chars_aliased.png / chars.txt
+  assets/opencomputers/textures/gui/borders.png
+    → neoforge/src/main/resources/assets/cryptand/textures/gui/borders.png
+
+  ── 任务 B **未**派生（附理由，供审计） ──
+
+  src/main/scala/li/cil/oc/client/renderer/font/DynamicFontRenderer.scala、
+  src/main/scala/li/cil/oc/client/renderer/font/FontParserHex.java、
+  src/main/scala/li/cil/oc/client/renderer/font/IGlyphProvider.java
+     理由：这一条是 hexfont 路径（application.conf:87 的默认 fontRenderer=hexfont），
+     它从 cryptand:font.hex 现场光栅化字形 —— 等于在本仓库再引入**第二套字形来源**，
+     与任务 B 的硬要求"字符内容一律走 common 的 ScreenTextLayer + TextFont8x8，别另写字形来源"冲突；
+     且它需要的 font.hex 资源不在本次资源清单内（本仓 NOTICE 明确不复制 font.hex）。
+     屏幕内容路径不经过任何字体渲染器，故该分支无功能缺失。
+
+  ── 任务 C：报文层 + 右键窗口（上游路径 → 本仓库路径） ──
+
+  src/main/scala/li/cil/oc/common/PacketBuilder.scala          (只留屏幕用到的写入/发送成员；去掉 Settings 距离开关)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/PacketBuilder.scala
+  src/main/scala/li/cil/oc/common/PacketPayload.scala          (通道 id 换成 cryptand:truescreen)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/PacketPayload.scala
+  src/main/scala/li/cil/oc/common/PacketType.scala             (只留 26 个屏幕报文类型)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/PacketType.scala
+  src/main/scala/li/cil/oc/common/PacketHandler.scala          (PacketParser + 分发入口；去掉机器人残影/物品/实体读法)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/PacketHandler.scala
+  src/main/scala/li/cil/oc/client/PacketSender.scala           (8 条输入报文 + TextBufferInit；去掉客户端专属的提示音)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/ClientPacketSender.scala
+  src/main/scala/li/cil/oc/client/PacketHandler.scala          (屏幕部分：快照/增量批/电源/触摸/颜色/朝向/红石)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/ClientPacketHandler.scala
+  src/main/scala/li/cil/oc/server/PacketSender.scala           (appendTextBuffer* 15 条 + 快照/电源/触摸/颜色/朝向/红石)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/ServerPacketSender.scala
+  src/main/scala/li/cil/oc/server/PacketHandler.scala          (键鼠/剪贴板/复制到分析器/快照请求 + 交互距离校验)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/ServerPacketHandler.scala
+  src/main/scala/li/cil/oc/common/Proxy.scala                  (registerPacket：单个双向 payload 的注册方式)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/network/TrueScreenNetwork.scala
+  src/main/scala/li/cil/oc/common/component/GpuTextBuffer.scala (object ClientGpuTextBufferHandler：显存块 RamInit/BitBlt/RamDestroy)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/common/component/ClientGpuTextBufferHandler.scala
+  src/main/scala/li/cil/oc/client/gui/Screen.scala             (画面/缩放/键鼠坐标映射；键码翻译按最小替代，见文件内说明)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/gui/TrueScreenWindow.scala
+  src/main/scala/li/cil/oc/client/Proxy.scala                  (客户端三条注册线 + 报文处理器的接线方式)
+    → neoforge/src/main/scala/com/hdf/cryptand/neoforge/truescreen/client/TrueScreenClientSetup.scala
+
+  ── 任务 C：方块资源（命名空间 opencomputers → cryptand，模型数值逐字） ──
+
+  generatedResources/assets/opencomputers/blockstates/{screen,frontflatscreen,backflatscreen}1..4.json
+    → neoforge/src/main/resources/assets/cryptand/blockstates/{truescreen,truescreenflat,truescreenflatback}1..4.json
+  resources/assets/opencomputers/models/block/screen.json
+    → neoforge/src/main/resources/assets/cryptand/models/block/truescreen.json
+  resources/assets/opencomputers/models/block/{front,back}flatscreen1..4.json
+    → neoforge/src/main/resources/assets/cryptand/models/block/truescreen{flat,flatback}1..4.json
+  generatedResources/assets/opencomputers/models/item/{screen,frontflatscreen,backflatscreen}1..4.json
+    → neoforge/src/main/resources/assets/cryptand/models/item/{truescreen,truescreenflat,truescreenflatback}1..4.json
+  resources/assets/opencomputers/textures/block/generic_side.png
+    → neoforge/src/main/resources/assets/cryptand/textures/block/generic_side.png
+  resources/assets/opencomputers/textures/block/openscreens/screen_{front,back,back2..4,side,side2..4}.png (9 张)
+    → neoforge/src/main/resources/assets/cryptand/textures/block/openscreens/*.png
+
+  ── 任务 C **未**派生（附理由） ──
+
+  src/main/scala/li/cil/oc/client/gui/traits/{InputBuffer,DisplayBuffer,Window}.scala、client/KeyBindings.scala、
+  integration/util/{GLFWTranslator,ItemSearch}.scala、client/Textures.scala 的 GUISprites 组
+     理由：这四个子系统（GLFW↔LWJGL 键码全表 / 键位配置 / 泛用物品搜索 / 图标贴图集）都不在屏幕闭包内，
+      且各自牵出 OC 的输入与集成层。窗口因此按最小替代直连键鼠：可打印字符走 textInput（固件真正消费的
+      通道完全正常），keyDown 的字符位固定为 0（只用 GLFW 键码）。要完全等价需先移植 GLFWTranslator。
+  src/main/scala/li/cil/oc/client/PacketHandler.scala 的非屏幕分支、server/PacketHandler.scala 的非屏幕分支
+     理由：音频/全息/机器人/机架/纳米机器等子系统未移植。
+  src/main/scala/li/cil/oc/server/ComponentTracker.scala、client/ComponentTracker.scala
+     理由：**直接复用上游实现**（我方组件注册进它），不派生、不另建索引 —— 否则报文处理器查不到。
+
+### 未派生但被引用的上游内容
+
+  - 运行期依赖 OpenComputers: Rebooted 的**公开 API**（li.cil.oc.api.*）与其
+    DataComponent NBT 桥（li.cil.oc.api.datacomponents.*）、ComponentTracker、
+    键盘方块实体/键盘组件（键盘子系统不移植，直接使用上游实现）。
+  - 字形宽度覆盖表：运行期读取 OpenComputers jar 内的 /assets/opencomputers/font.hex
+    （不复制到本仓库，保持单一事实来源）。
+
+--------------------------------------------------------------------------------
+2. musl (MIT License) — 经 OpenComputers: Rebooted 间接派生
+--------------------------------------------------------------------------------
+
+  neoforge/.../truescreen/util/FontUtils.scala 中的 wcwidth 查找表与算法派生自
+  musl 的 src/ctype/{nonspacing.h, wide.h, wcwidth.c}：
+
+    Copyright © 2005-2020 Rich Felker, et al.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.

@@ -14,6 +14,7 @@
 package com.hdf.cryptand.neoforge.core.sound;
 
 import com.hdf.cryptand.Cryptand;
+import com.hdf.cryptand.neoforge.CryptandNeoForge;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.StreamCodec;
@@ -51,7 +52,7 @@ public record TransformerSoundPayload(BlockPos pos, double freq, double iP, doub
         context.enqueueWork(() -> {
             TransformerSoundState.set(payload.pos(), payload.freq(), payload.iP(), payload.iS());
             try {
-                com.hdf.cryptand.neoforge.CryptandNeoForge.WAF_LOGGER.info(
+                CryptandNeoForge.WAF_LOGGER.info(
                         "[TfSoundCli] RCV pos={} freq={} iP={} iS={}",
                         payload.pos(), String.format("%.1f", payload.freq()),
                         String.format("%.2f", payload.iP()), String.format("%.3f", payload.iS()));

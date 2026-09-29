@@ -125,10 +125,31 @@ public final class SolvePipeline {
             }
             mergedCount = blockNodes.size();
         }
-        for (MatrixSolveNode mn : soloNodes) {
-            SolveResult r = mn.directSolve();
-            results.put(mn.id(), r);
-            if (primary == null) primary = r;
+        // 独立矩阵节点并行（2026-08-30 用户：并行采用线程分配器进行任务分配）：
+        // 多个 solo 矩阵节点互相独立（无依赖）→ 经 ThreadDispatchers 分配并行；
+        // 数量少/未启用异步时保留串行（避免调度开销）。
+        // ⚠ directSolve() 每次求解（非纯缓存）→ 只调用一次，结果收集到并发容器。
+        if (asyncEnabled && soloNodes.size() >= Math.max(2, parallelThreshold / 8)) {
+            java.util.concurrent.ConcurrentHashMap<String, SolveResult> soloResults =
+                    new java.util.concurrent.ConcurrentHashMap<>();
+            java.util.List<CompletableFuture<Void>> fs = new java.util.ArrayList<>(soloNodes.size());
+            for (MatrixSolveNode mn : soloNodes) {
+                fs.add(ThreadDispatchers.submitGeneric(() ->
+                        soloResults.put(mn.id(), mn.directSolve())));
+            }
+            CompletableFuture.allOf(fs.toArray(new CompletableFuture[0])).join();
+            for (MatrixSolveNode mn : soloNodes) {
+                SolveResult r = soloResults.get(mn.id());
+                results.put(mn.id(), r);
+                if (primary == null) primary = r;
+            }
+            asyncUsed = true;
+        } else {
+            for (MatrixSolveNode mn : soloNodes) {
+                SolveResult r = mn.directSolve();
+                results.put(mn.id(), r);
+                if (primary == null) primary = r;
+            }
         }
 
         // ── 阶段2：直算节点按拓扑层执行 ──────────────────────────────

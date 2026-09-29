@@ -33,12 +33,15 @@ package com.hdf.cryptand.circuitsimulation.solver;
  *   solver.solve(net);                    // 求解当前状态下的稳态
  *   </pre>
  */
-public final class SimClock {
+public final class SimClock implements TimeBase {
 
-    /** 上次推进时间戳（ns）；0 = 未建立基准 */
-    private long lastNanos;
+    /** 上次推进时间戳（ns）；0 = 未建立基准。
+     *  ⚠ 2026-08-30 审计（thread 低危）：volatile——主线程 tick() 写、
+     *  后台求解线程 time()/lastDt() 只读，无 volatile 则 JMM 数据竞争
+     *  （后台可能读到陈旧仿真时间/步长）。 */
+    private volatile long lastNanos;
     /** 累计仿真时间（s），绑定实际时钟（仅主线程推进） */
-    private double time;
+    private volatile double time;
     /** 步长钳制（真实时间，防暂停/长卡顿后跳变爆炸） */
     private static final double MIN_DT = 0.01, MAX_DT = 1.0;
 
@@ -47,8 +50,9 @@ public final class SimClock {
     private int tickThrottle = 1;
     /** 当前节流窗口内累计的 tick 数 */
     private int throttleCount;
-    /** 节流窗口内累积的真实时间（s），到节拍点一次性并入 simTime */
-    private double pendingDt;
+    /** 节流窗口内累积的真实时间（s），到节拍点一次性并入 simTime。
+     *  ⚠ 2026-08-30 审计：volatile（与 time/lastNanos 同理，跨线程可见）。 */
+    private volatile double pendingDt;
 
     /**
      * 推进预算（2026-08-20 用户要求：推进次数与异步线程每秒计算次数有关）。
@@ -143,6 +147,7 @@ public final class SimClock {
      * @return true = 预算充足且主线程心跳正常（可推进本次求解）；
      *         false = 预算用完 / 主线程心跳超时（本 tick 停止）
      */
+    @Override
     public boolean consumeStep() {
         // 心跳看门狗：主线程卡死 → 异步线程立即停止（预算未耗尽也不推进）
         if (System.nanoTime() - lastTickNanos > HEARTBEAT_TIMEOUT_NS) return false;
@@ -164,6 +169,46 @@ public final class SimClock {
 
     /** 上次 tick 实际推进的 dt（s，只读） */
     public double lastDt() { return lastEmittedDt; }
+
+    /** 主线程心跳是否存活（最近 tick 距今 ≤ HEARTBEAT_TIMEOUT_NS）。
+     *  ⚠ 2026-08-30 求解轮时间基准改【真实流逝】用：主线程卡死 → 心跳超时 →
+     *  求解轮不推进状态（保留"时间只由主线程驱动"的安全语义）。
+     *  ⚠ 2026-08-30 每实例兼容：lastTickNanos==0（独立实例 / 从未 tick）→ 无
+     *  主线程心跳约束 → 视为存活（纯真实流逝推进）——仿真核心每实例用独立
+     *  SimClock（EDA/多客户端）时不依赖主线程 tick；MC 主线程 tick 后非 0 →
+     *  卡死超时 → false（安全门控生效）。 */
+    public boolean isHeartbeatAlive() {
+        return lastTickNanos == 0
+                || System.nanoTime() - lastTickNanos <= HEARTBEAT_TIMEOUT_NS;
+    }
+
+    /** TimeBase 接口实现（2026-09 补全契约）：真实时间模式 = 主线程心跳存活 */
+    @Override
+    public boolean isAlive() {
+        return isHeartbeatAlive();
+    }
+
+    /** ⚠ 2026-08-30 真实流逝基准（TimeBase 接口实现）：返回距上次调用本方法的
+     * 真实时间差（s；首轮默认 0.05；clamp [0.01, 1.0]）。主线程心跳超时 →
+     * 0（不推进状态，保留"时间只由主线程驱动"安全语义）。
+     * 状态推进（solveAll → advancePseudoTime）统一经本方法获取 dt——与求解
+     * 轮次解耦：轮多 dt 小、轮少 dt 大 → 状态演化绑定真实时间（1 倍速），
+     * 不因求解频率（上限 100Hz，实际轮次由计算速度决定）而超速/减速。 */
+    private volatile long lastAdvanceNanos;
+
+    @Override
+    public double advance() {
+        if (!isHeartbeatAlive()) return 0; // 主线程卡死 → 不推进
+        long now = System.nanoTime();
+        long last = lastAdvanceNanos;
+        if (last == 0) {
+            lastAdvanceNanos = now;
+            return 0.05; // 首轮默认（未建立基准）
+        }
+        double dt = Math.min(1.0, Math.max(0.01, (now - last) / 1e9));
+        lastAdvanceNanos = now;
+        return dt;
+    }
 
     /** 当前累计仿真时间（s，绑定实际时钟，仅主线程推进；异步线程只读） */
     public double time() { return time; }
@@ -188,6 +233,7 @@ public final class SimClock {
         budgetPerTick = 1;
         budgetCap = 1;
         lastTickNanos = 0;
+        lastAdvanceNanos = 0; // ⚠ 2026-08-30：清真实流逝基准
     }
 
     @Override

@@ -12,7 +12,8 @@ package com.hdf.cryptand.neoforge.cee.mixin;
 
 import com.george_vi.electroenergetics.content.voxel_wire.VoxelWireItem;
 import com.hdf.cryptand.neoforge.cee.CeeTerminalSupport;
-import com.hdf.cryptand.neoforge.powergrid.adapter.CryptandWirePlacement;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.CryptandWirePlacement;
+import com.hdf.cryptand.neoforge.powergrid.network.wire.PowerGridWireConverter;
 import dev.architectury.event.EventResult;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.context.UseOnContext;
@@ -30,7 +31,7 @@ public abstract class CeeVoxelWireItemMixin {
         try {
             if (context == null || context.getPlayer() == null) return;
             // 自管模式（PowerGrid 接管 + CEE 支持）：CEE 线盘 → 自管放置
-            if (!com.hdf.cryptand.neoforge.powergrid.adapter.PowerGridWireConverter
+            if (!PowerGridWireConverter
                     .isEnabled()) return;
             if (!CeeTerminalSupport.ceeEnabled()) return;
             EventResult r = CryptandWirePlacement.handleUseOn(

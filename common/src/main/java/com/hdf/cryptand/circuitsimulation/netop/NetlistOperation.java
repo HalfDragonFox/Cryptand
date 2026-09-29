@@ -97,6 +97,23 @@ public final class NetlistOperation implements Runnable {
         return m;
     }
 
+    // ⚠ 2026-08-30 审计 #19：网表操作失败不再静默——节流告警（原 catch
+    // (Throwable ignored) 使 executeRebuild 反复失败 → 网络永不重建/求解，
+    // 无从定位）。
+    private static final System.Logger NOP_LOG = System.getLogger("cryptand.netop");
+    private static volatile long nopDbgLast;
+    private static final long NOP_DBG_INTERVAL_MS = 5000;
+
+    private void logOpError(String op, Throwable t) {
+        long now = System.currentTimeMillis();
+        if (now - nopDbgLast > NOP_DBG_INTERVAL_MS) {
+            nopDbgLast = now;
+            NOP_LOG.log(System.Logger.Level.WARNING,
+                    "[NetOp] {0} failed for net={1}: {2}",
+                    op, networkKey, t == null ? "null" : t.toString());
+        }
+    }
+
     /** 按优先级执行整合后的操作：网络内容破坏 &gt; 网络拆合 &gt; 重建 &gt; 求解。 */
     private void executeMerged(NetOpMerged m) {
         boolean rebuildSplitAfter = false;
@@ -104,7 +121,8 @@ public final class NetlistOperation implements Runnable {
         if (m.destroy) {
             try {
                 executor.executeDestroy(networkKey, m.destroyData);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                logOpError("executeDestroy", t);
             }
         }
         // 0.5) 电气设备列表包增量更新（2026-08-23 用户协议：设备增量是重建输入，
@@ -112,27 +130,31 @@ public final class NetlistOperation implements Runnable {
         if (m.deviceDelta) {
             try {
                 executor.executeDeviceDelta(networkKey, m.deviceDeltaData);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                logOpError("executeDeviceDelta", t);
             }
         }
         // 1) 网络拆合（次优先）
         if (m.splitMerge) {
             try {
                 executor.executeSplitMerge(networkKey, m.splitMergeData);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                logOpError("executeSplitMerge", t);
             }
         }
         // 2) 网络重建（次优先）
         if (m.rebuild) {
             try {
                 rebuildSplitAfter = executor.executeRebuild(networkKey, m.rebuildData);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                logOpError("executeRebuild", t);
             }
             // 重建时如果需要网络拆合 → 重建完成后执行拆合操作，然后继续流程
             if (rebuildSplitAfter) {
                 try {
                     executor.executeSplitMerge(networkKey, m.splitMergeData);
-                } catch (Throwable ignored) {
+                } catch (Throwable t) {
+                    logOpError("executeSplitMergeAfterRebuild", t);
                 }
             }
         }
@@ -140,7 +162,8 @@ public final class NetlistOperation implements Runnable {
         if (m.solve) {
             try {
                 executor.executeSolve(networkKey, m.solveData);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                logOpError("executeSolve", t);
             }
         }
     }
